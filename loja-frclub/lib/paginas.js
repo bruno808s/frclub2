@@ -18,6 +18,7 @@ export const ICONE = {
   menu: svg('<path d="M3 7h18M3 12h18M3 17h18"/>'),
   fechar: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
   voltar: svg('<path d="m15 18-6-6 6-6"/>'),
+  escudo: svg('<path d="M12 3 4 6v6c0 4.4 3.4 8.3 8 9 4.6-.7 8-4.6 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>'),
 };
 
 function linkWhats(cfg, texto) {
@@ -82,13 +83,12 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
       <ul>
         ${submenu('Peças', categorias, 'categoria') || '<li class="menu-item"><a href="/pecas">Peças</a></li>'}
         ${submenu('Marcas', marcas, 'marca')}
-        <li class="menu-item"><a href="/pecas?ordem=novidades">Novidades</a></li>
         <li class="menu-item"><a href="/#sobre">Sobre a ${esc(cfg.nomeLoja)}</a></li>
       </ul>
     </nav>
     <div class="acoes">
       <a class="icone" href="/favoritos" aria-label="Favoritos">${ICONE.coracao}<span class="contador" data-contador-favoritos hidden></span></a>
-      <a class="icone so-pc" href="/admin" aria-label="Área do lojista">${ICONE.usuario}</a>
+      <a class="icone" href="/conta" aria-label="Minha conta">${ICONE.usuario}</a>
       <button class="icone" type="button" data-abrir-sacola aria-label="Sacola">${ICONE.sacola}<span class="contador" data-contador-sacola hidden></span></button>
     </div>
   </header>
@@ -105,9 +105,10 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
         <h2>Loja</h2>
         <ul>
           <li><a href="/pecas">Todas as peças</a></li>
-          <li><a href="/pecas?ordem=novidades">Novidades</a></li>
+          <li><a href="/depoimentos">Depoimentos</a></li>
           <li><a href="/#sobre">Sobre</a></li>
           <li><a href="/#duvidas">Dúvidas</a></li>
+          <li><a href="/conta">Minha conta</a></li>
         </ul>
       </div>
       <div>
@@ -119,7 +120,7 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
         </ul>
       </div>
     </div>
-    <p class="rodape-legal">© ${new Date().getFullYear()} ${esc(cfg.nomeLoja)}${cfg.cnpj ? ` · CNPJ ${esc(cfg.cnpj)}` : ''}</p>
+    <p class="rodape-legal">© ${new Date().getFullYear()} ${esc(cfg.nomeLoja)}${cfg.cnpj ? ` · CNPJ ${esc(cfg.cnpj)}` : ''} · <a href="/admin" rel="nofollow">Área do lojista</a></p>
   </footer>
 
   <div class="sacola" data-sacola hidden>
@@ -162,8 +163,20 @@ export function cartao(p) {
   </article>`;
 }
 
+// ---------- depoimentos ----------
+const estrelas = nota => `<p class="estrelas" aria-label="${nota} de 5 estrelas">${'★'.repeat(nota)}<span aria-hidden="true">${'★'.repeat(5 - nota)}</span></p>`;
+const quando = data => new Date(`${String(data).replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'America/Sao_Paulo' });
+function cartaoDepoimento(d) {
+  return `
+  <figure class="depoimento">
+    ${estrelas(d.nota)}
+    <blockquote>${String(d.texto).split(/\n+/).filter(Boolean).map(par => `<p>${esc(par)}</p>`).join('')}</blockquote>
+    <figcaption><span><b>${esc(d.nome)}</b>${d.cidade ? ` · ${esc(d.cidade)}` : ''}</span><span class="depoimento-data">${esc(quando(d.criado_em))}</span></figcaption>
+  </figure>`;
+}
+
 // ---------- início ----------
-export function paginaInicio(cfg, produtos) {
+export function paginaInicio(cfg, produtos, depoimentos = []) {
   const heroPc = cfg.heroDesktop ? foto(cfg.heroDesktop) : '/static/img/hero-padrao-pc.jpg';
   const heroCel = cfg.heroMobile ? foto(cfg.heroMobile) : cfg.heroDesktop ? heroPc : '/static/img/hero-padrao-celular.jpg';
   const logo = cfg.logo ? foto(cfg.logo) : '/static/img/logo-branca.png';
@@ -195,6 +208,14 @@ export function paginaInicio(cfg, produtos) {
     <div class="secao-cabeca"><h2 id="destaques">Destaques</h2></div>
     <div class="trilho">${destaques.map(cartao).join('')}</div>
   </section>` : ''}
+
+  <section class="secao" aria-labelledby="depoimentos-titulo">
+    <div class="secao-cabeca">
+      <h2 id="depoimentos-titulo">Depoimentos</h2>
+      <a class="link-linha" href="/depoimentos">${depoimentos.length ? 'Ver todos e deixar o seu' : 'Deixe o seu depoimento'}</a>
+    </div>
+    ${depoimentos.length ? `<div class="trilho trilho-depoimentos">${depoimentos.map(cartaoDepoimento).join('')}</div>` : '<p class="vazio">Comprou com a gente? Conte como foi a sua experiência.</p>'}
+  </section>
 
   ${cfg.selos?.filter(Boolean).length ? `
   <section class="selos" aria-label="Por que comprar com a gente">
@@ -317,19 +338,19 @@ export function paginaPeca(cfg, produtos, p) {
 }
 
 // ---------- checkout (a sacola vem do aparelho; o servidor confere preço e frete) ----------
-export function paginaCheckout(cfg, produtos, ligado) {
-  const campo = (nome, rotulo, extra = '', classe = '') => `<label class="campo ${classe}"><span>${rotulo}</span><input name="${nome}" ${extra}></label>`;
+const campo = (nome, rotulo, extra = '', classe = '') => `<label class="campo ${classe}"><span>${rotulo}</span><input name="${nome}" ${extra}><small class="campo-erro" hidden></small></label>`;
+export function paginaCheckout(cfg, produtos, ligado, conta) {
   const corpo = ligado ? `
   <section class="secao checkout">
-    <div class="catalogo-cabeca"><h1>Finalizar compra</h1></div>
-    <form class="checkout-grade" data-checkout novalidate>
+    <div class="catalogo-cabeca"><h1>Finalizar compra</h1>${conta ? '' : '<p class="nota">Já tem conta? <a class="sublinhado" href="/conta?voltar=/checkout">Entrar</a> para preencher seus dados.</p>'}</div>
+    <form class="checkout-grade" data-checkout ${conta ? `data-conta="${esc(JSON.stringify(conta))}"` : ''} novalidate>
       <div class="checkout-dados">
         <fieldset>
           <legend>Seus dados</legend>
           ${campo('nome', 'Nome completo', 'autocomplete="name" maxlength="120" required', 'largo')}
           ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required')}
-          ${campo('telefone', 'Celular com DDD', 'type="tel" autocomplete="tel" inputmode="tel" maxlength="20" required')}
-          ${campo('cpf', 'CPF', 'inputmode="numeric" maxlength="14" required')}
+          ${campo('telefone', 'Celular com DDD', 'type="tel" autocomplete="tel" inputmode="tel" maxlength="20" required data-telefone')}
+          ${campo('cpf', 'CPF', 'inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required data-cpf')}
         </fieldset>
         <fieldset>
           <legend>Entrega</legend>
@@ -394,8 +415,153 @@ export function paginaPedido(cfg, produtos, pedido) {
     </div>
     <p class="nota">Entrega para ${esc(pedido.cliente.nome)} · ${esc(`${pedido.cliente.rua}, ${pedido.cliente.numero} · ${pedido.cliente.cidade}/${pedido.cliente.uf}`)}</p>
     ${cfg.whatsapp ? `<a class="botao botao-linha" href="${esc(linkWhats(cfg, `Olá! Sobre o meu pedido ${pedido.codigo}.`))}" target="_blank" rel="noopener">Falar no WhatsApp</a>` : ''}
+    ${pedido.status === 'enviado' ? '<p class="nota">Já recebeu? <a class="sublinhado" href="/depoimentos">Conte como foi a sua compra</a>.</p>' : ''}
   </section>`;
   return moldura(cfg, produtos, { titulo, corpo });
+}
+
+// ---------- conta do cliente ----------
+const NOME_STATUS_CURTO = { aguardando: 'Aguardando pagamento', pago: 'Pago · em separação', enviado: 'Enviado', cancelado: 'Cancelado' };
+export function paginaConta(cfg, produtos, { cliente, pedidos, semSenhaLigado }) {
+  const isca = '<label class="isca" aria-hidden="true">Site <input name="site" tabindex="-1" autocomplete="off"></label>';
+  const lateral = `
+    <aside class="conta-lateral">
+      ${ICONE.escudo}
+      <h2>Seus dados protegidos</h2>
+      <p>A senha é guardada criptografada: nem a loja consegue ler. O pagamento acontece no ambiente do Mercado Pago e os dados do seu cartão não passam pela loja.</p>
+    </aside>`;
+  if (!cliente) {
+    const corpo = `
+  <section class="secao conta">
+    <div class="conta-principal">
+      <p class="peca-marca">Área segura</p>
+      <h1>Sua conta ${esc(cfg.nomeLoja)}</h1>
+      <p class="conta-sub">Entre para acompanhar seus pedidos e comprar mais rápido${semSenhaLigado ? ', com e-mail e senha ou por um link no seu e-mail' : ''}.</p>
+      <div class="conta-abas" role="tablist">
+        <button type="button" role="tab" data-aba-conta="entrar" aria-selected="true">Entrar</button>
+        <button type="button" role="tab" data-aba-conta="criar" aria-selected="false">Criar conta</button>
+        ${semSenhaLigado ? '<button type="button" role="tab" data-aba-conta="link" aria-selected="false">Sem senha</button>' : ''}
+      </div>
+      <form class="conta-form" data-form-conta="entrar" novalidate>
+        ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required placeholder="voce@email.com"')}
+        ${campo('senha', 'Senha', 'type="password" autocomplete="current-password" maxlength="200" required')}
+        ${isca}
+        <p class="form-erro" role="alert" hidden></p>
+        <button class="botao" type="submit">Entrar</button>
+        ${semSenhaLigado ? '<button class="link-simples" type="button" data-ir-aba="link">Esqueci minha senha</button>' : ''}
+      </form>
+      <form class="conta-form" data-form-conta="criar" novalidate hidden>
+        ${campo('nome', 'Nome completo', 'autocomplete="name" maxlength="120" required')}
+        ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required placeholder="voce@email.com"')}
+        ${campo('senha', 'Senha (mínimo 8 caracteres)', 'type="password" autocomplete="new-password" maxlength="200" minlength="8" required')}
+        ${isca}
+        <p class="form-erro" role="alert" hidden></p>
+        <button class="botao" type="submit">Criar conta</button>
+      </form>
+      ${semSenhaLigado ? `
+      <form class="conta-form" data-form-conta="link" novalidate hidden>
+        <p class="nota">Mandamos um link para o seu e-mail. É só clicar para entrar, sem senha. Serve também para quem esqueceu a senha.</p>
+        ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required placeholder="voce@email.com"')}
+        ${isca}
+        <p class="form-erro" role="alert" hidden></p>
+        <p class="form-ok" role="status" hidden></p>
+        <button class="botao" type="submit">Receber link</button>
+      </form>` : ''}
+    </div>
+    ${lateral}
+  </section>`;
+    return moldura(cfg, produtos, { titulo: 'Minha conta', corpo });
+  }
+  const d = cliente.dados;
+  const corpo = `
+  <section class="secao conta logada">
+    <div class="conta-principal">
+      <p class="peca-marca">Minha conta</p>
+      <h1>${cliente.nome ? `Olá, ${esc(cliente.nome.split(' ')[0])}` : 'Olá!'}</h1>
+      <p class="conta-sub">${esc(cliente.email)} · <button class="link-simples" type="button" data-sair-conta>Sair</button></p>
+
+      <h2 class="conta-titulo">Meus pedidos</h2>
+      ${pedidos.length ? `<ul class="conta-pedidos">${pedidos.map(p => `
+        <li>
+          <a href="/pedido/${esc(p.codigo)}">
+            <span><b>Pedido ${esc(p.codigo)}</b><small>${esc(new Date(`${p.criado_em.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }))} · ${p.itens.length} ${p.itens.length === 1 ? 'peça' : 'peças'}</small></span>
+            <span class="status-pedido status-${esc(p.status)}">${esc(NOME_STATUS_CURTO[p.status] ?? p.status)}</span>
+            <b>${reais(p.total)}</b>
+          </a>
+        </li>`).join('')}</ul>` : '<p class="vazio">Você ainda não fez nenhum pedido com esta conta. <a href="/pecas">Ver as peças</a></p>'}
+
+      <h2 class="conta-titulo">Meus dados</h2>
+      <form class="conta-form conta-dados" data-form-conta="dados" novalidate>
+        ${campo('nome', 'Nome completo', `autocomplete="name" maxlength="120" required value="${esc(cliente.nome)}"`, 'largo')}
+        ${campo('telefone', 'Celular com DDD', `type="tel" autocomplete="tel" maxlength="20" value="${esc(d.telefone)}" data-telefone`)}
+        ${campo('cep', 'CEP', `inputmode="numeric" autocomplete="postal-code" maxlength="9" placeholder="00000-000" value="${esc(d.cep)}" data-cep`)}
+        ${campo('rua', 'Rua', `autocomplete="address-line1" maxlength="120" value="${esc(d.rua)}"`, 'largo')}
+        ${campo('numero', 'Número', `maxlength="20" value="${esc(d.numero)}"`)}
+        ${campo('complemento', 'Complemento', `maxlength="80" value="${esc(d.complemento)}"`)}
+        ${campo('bairro', 'Bairro', `maxlength="80" value="${esc(d.bairro)}"`)}
+        ${campo('cidade', 'Cidade', `maxlength="80" value="${esc(d.cidade)}"`)}
+        ${campo('uf', 'Estado (sigla)', `maxlength="2" value="${esc(d.uf)}"`)}
+        <p class="form-erro largo" role="alert" hidden></p>
+        <button class="botao" type="submit">Salvar dados</button>
+      </form>
+
+      <h2 class="conta-titulo">${cliente.temSenha ? 'Trocar senha' : 'Criar uma senha'}</h2>
+      <form class="conta-form" data-form-conta="senha" novalidate>
+        ${cliente.temSenha && cliente.via !== 'link' ? campo('senhaAtual', 'Senha atual', 'type="password" autocomplete="current-password" maxlength="200" required') : ''}
+        ${campo('senhaNova', 'Nova senha (mínimo 8 caracteres)', 'type="password" autocomplete="new-password" maxlength="200" minlength="8" required')}
+        <p class="form-erro" role="alert" hidden></p>
+        <button class="botao botao-linha" type="submit">Salvar senha</button>
+      </form>
+    </div>
+    ${lateral}
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Minha conta', corpo });
+}
+
+export function paginaLinkEntrada(cfg, produtos, token) {
+  const corpo = `
+  <section class="secao conta">
+    <div class="conta-principal">
+      <p class="peca-marca">Área segura</p>
+      <h1>Entrar na sua conta</h1>
+      <p class="conta-sub">Clique no botão para entrar. O link só pode ser usado uma vez.</p>
+      <form class="conta-form" data-usar-link="${esc(token)}" novalidate>
+        <p class="form-erro" role="alert" hidden></p>
+        <button class="botao" type="submit">Entrar</button>
+      </form>
+    </div>
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Entrar', corpo });
+}
+
+export function paginaDepoimentos(cfg, produtos, depoimentos, nome) {
+  const media = depoimentos.length ? depoimentos.reduce((t, d) => t + d.nota, 0) / depoimentos.length : 0;
+  const corpo = `
+  <section class="secao catalogo">
+    <div class="catalogo-cabeca">
+      <h1>Depoimentos</h1>
+      ${depoimentos.length ? `<p class="nota">${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} de 5 · ${depoimentos.length} ${depoimentos.length === 1 ? 'avaliação' : 'avaliações'}</p>` : ''}
+    </div>
+    ${depoimentos.length ? `<div class="grade-depoimentos">${depoimentos.map(cartaoDepoimento).join('')}</div>` : '<p class="vazio">Ainda não há depoimentos. Seja a primeira pessoa a contar como foi.</p>'}
+  </section>
+  <section class="secao secao-cinza" aria-labelledby="deixar-depoimento">
+    <form class="depoimento-form" data-form-depoimento novalidate>
+      <h2 id="deixar-depoimento">Deixe seu depoimento</h2>
+      <p class="nota">Conte como foi comprar com a gente. Ele aparece aqui depois de aprovado pela loja.</p>
+      <fieldset class="escolher-estrelas">
+        <legend>Sua nota</legend>
+        ${[5, 4, 3, 2, 1].map(n => `<input type="radio" name="nota" value="${n}" id="nota-${n}" ${n === 5 ? 'checked' : ''}><label for="nota-${n}" aria-label="${n} ${n === 1 ? 'estrela' : 'estrelas'}">★</label>`).join('')}
+      </fieldset>
+      ${campo('nome', 'Seu nome', `autocomplete="name" maxlength="60" required value="${esc(nome)}"`)}
+      ${campo('cidade', 'Cidade (opcional)', 'maxlength="60" placeholder="Ex.: Salvador, BA"')}
+      <label class="campo largo"><span>Depoimento</span><textarea name="texto" rows="5" maxlength="1000" required placeholder="Como foi a peça, a entrega, o atendimento…"></textarea></label>
+      <label class="isca" aria-hidden="true">Site <input name="site" tabindex="-1" autocomplete="off"></label>
+      <p class="form-erro" role="alert" hidden></p>
+      <p class="form-ok" role="status" hidden></p>
+      <button class="botao" type="submit">Enviar depoimento</button>
+    </form>
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Depoimentos', descricao: `O que dizem os clientes da ${cfg.nomeLoja}.`, corpo });
 }
 
 // ---------- favoritos (a lista fica no aparelho de quem visita) ----------

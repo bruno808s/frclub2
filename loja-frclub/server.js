@@ -1,6 +1,7 @@
 // FR CLUB: site da loja com painel para cadastrar peças (sem dependências; Node 22.13+).
 // Dados em DATA_DIR (padrão ./dados): loja.sqlite + pasta fotos/.
 // Variáveis: ADMIN_SENHA (senha do painel), DATA_DIR, PORT, CONFIAR_PROXY=1 (no Render).
+// Opcionais: MP_ACCESS_TOKEN, SUPERFRETE_TOKEN (pagamento e frete), BREVO_API_KEY e EMAIL_REMETENTE (e-mails).
 
 import http from 'node:http';
 import path from 'node:path';
@@ -8,9 +9,14 @@ import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { abrirBanco, lerConfig, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
-import { normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaCheckout, paginaFavoritos, paginaInicio, paginaPeca, paginaPedido } from './lib/paginas.js';
+import { promisify } from 'node:util';
+import { abrirBanco, lerConfig, paraCliente, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
+import {
+  normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaCheckout, paginaConta, paginaDepoimentos, paginaFavoritos, paginaInicio,
+  paginaLinkEntrada, paginaPeca, paginaPedido,
+} from './lib/paginas.js';
 import { ErroServico, buscarPagamento, cotarFrete, criarCobranca, freteLigado, pagamentoLigado } from './lib/pagamento.js';
+import { emailLigado, emailLinkEntrada, emailNovaVenda, emailPedidoEnviado, emailPedidoPago, enviarDepois, enviarEmail } from './lib/email.js';
 
 const RAIZ = path.dirname(fileURLToPath(import.meta.url));
 const PUBLICO = path.join(RAIZ, 'public');
@@ -401,11 +407,20 @@ async function buscarEndereco(req, res, [cep]) {
   responder(res, 200, { rua: dados.logradouro || '', bairro: dados.bairro || '', cidade: dados.localidade || '', uf: dados.uf || '' });
 }
 
+// Nome e sobrenome, só letras (aceita acentos, apóstrofo e hífen), cada ponta com 2 letras ou mais.
+const NOME_COMPLETO = /^\p{L}{2,}(?: [\p{L}'.-]+)* [\p{L}'.-]{2,}$/u;
+const nomeValido = nome => NOME_COMPLETO.test(nome);
+function lerEmail(v) {
+  const email = texto(v, 120, 'E-mail').toLowerCase();
+  if (!/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(email)) throw new ErroHttp(400, 'E-mail inválido.');
+  return email;
+}
+
 function lerCliente(c) {
   if (!c || typeof c !== 'object' || Array.isArray(c)) throw new ErroHttp(400, 'Preencha seus dados.');
   const cliente = {
     nome: texto(c.nome, 120, 'Nome').replace(/\s+/g, ' '),
-    email: texto(c.email, 120, 'E-mail').toLowerCase(),
+    email: lerEmail(c.email),
     cpf: soDigitos(texto(c.cpf, 20, 'CPF')),
     telefone: soDigitos(texto(c.telefone, 20, 'Telefone')),
     cep: lerCep(c.cep),
@@ -416,8 +431,7 @@ function lerCliente(c) {
     cidade: texto(c.cidade, 80, 'Cidade'),
     uf: texto(c.uf, 2, 'Estado').toUpperCase(),
   };
-  if (!/^\S{2,}( \S+)+$/.test(cliente.nome)) throw new ErroHttp(400, 'Digite seu nome completo.');
-  if (!/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(cliente.email)) throw new ErroHttp(400, 'E-mail inválido.');
+  if (!nomeValido(cliente.nome)) throw new ErroHttp(400, 'Digite seu nome completo (nome e sobrenome).');
   if (!cpfValido(cliente.cpf)) throw new ErroHttp(400, 'CPF inválido.');
   if (cliente.telefone.length < 10 || cliente.telefone.length > 11) throw new ErroHttp(400, 'Telefone: DDD + número.');
   if (!cliente.rua || !cliente.numero || !cliente.bairro || !cliente.cidade) throw new ErroHttp(400, 'Preencha o endereço completo.');
@@ -432,6 +446,7 @@ async function criarPedido(req, res) {
   const corpo = await lerJson(req);
   const itens = montarItens(corpo.itens);
   const cliente = lerCliente(corpo.cliente);
+  const conta = sessaoCliente(req);
   const subtotal = somar(itens);
   // O frete é recalculado aqui: o valor escolhido no navegador não vale.
   let opcoes;
@@ -444,9 +459,9 @@ async function criarPedido(req, res) {
   if (!frete) throw new ErroHttp(409, 'Escolha a forma de entrega de novo.');
   const total = Math.round((subtotal + frete.preco) * 100) / 100;
   const codigo = crypto.randomBytes(9).toString('base64url');
-  const { lastInsertRowid } = db.prepare(`INSERT INTO pedidos (codigo, itens, cliente, subtotal, frete_nome, frete_valor, frete_prazo, total)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(codigo, JSON.stringify(itens), JSON.stringify(cliente), subtotal,
-    `${frete.empresa ? `${frete.empresa} ` : ''}${frete.nome}`.trim(), frete.preco, frete.prazo, total);
+  const { lastInsertRowid } = db.prepare(`INSERT INTO pedidos (codigo, itens, cliente, subtotal, frete_nome, frete_valor, frete_prazo, total, cliente_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(codigo, JSON.stringify(itens), JSON.stringify(cliente), subtotal,
+    `${frete.empresa ? `${frete.empresa} ` : ''}${frete.nome}`.trim(), frete.preco, frete.prazo, total, conta?.id ?? null);
   let cobranca;
   try {
     cobranca = await criarCobranca({ pedido: { codigo }, itens, cliente, frete, baseUrl: urlDoSite(req), nomeLoja: cfg.nomeLoja });
@@ -455,11 +470,16 @@ async function criarPedido(req, res) {
     throw falhaServico(erro);
   }
   db.prepare('UPDATE pedidos SET mp_link = ? WHERE id = ?').run(cobranca.link, Number(lastInsertRowid));
+  // A conta guarda o endereço da última compra para preencher sozinho na próxima (o CPF não fica guardado).
+  if (conta) {
+    const { nome, email, cpf, ...endereco } = cliente;
+    db.prepare(`UPDATE clientes SET dados = ?, nome = CASE WHEN nome = '' THEN ? ELSE nome END WHERE id = ?`).run(JSON.stringify(endereco), nome, conta.id);
+  }
   responder(res, 201, { codigo, link: cobranca.link });
 }
 
 // Atualiza o pedido com o que o Mercado Pago diz sobre o pagamento.
-function aplicarPagamento(pagamento) {
+function aplicarPagamento(pagamento, base) {
   const linha = db.prepare('SELECT * FROM pedidos WHERE codigo = ?').get(pagamento.referencia);
   if (!linha) return null;
   const pedido = paraPedido(linha);
@@ -469,11 +489,15 @@ function aplicarPagamento(pagamento) {
   } else if (['refunded', 'charged_back'].includes(pagamento.status)) status = 'cancelado';
   db.prepare(`UPDATE pedidos SET status = ?, mp_pagamento = ?, mp_status = ?, atualizado_em = datetime('now') WHERE id = ?`)
     .run(status, pagamento.id, pagamento.status, pedido.id);
-  // Peça única vendida sai da loja na hora.
+  const atualizado = paraPedido(db.prepare('SELECT * FROM pedidos WHERE id = ?').get(pedido.id));
   if (status === 'pago' && pedido.status !== 'pago') {
+    // Peça única vendida sai da loja na hora.
     for (const i of pedido.itens) if (i.peca_unica) db.prepare(`UPDATE produtos SET esgotado = 1, atualizado_em = datetime('now') WHERE id = ?`).run(i.id);
+    const cfg = lerConfig(db);
+    enviarDepois(cfg, emailPedidoPago(cfg, atualizado, base));
+    if (cfg.email) enviarDepois(cfg, emailNovaVenda(cfg, atualizado, base));
   }
-  return paraPedido(db.prepare('SELECT * FROM pedidos WHERE id = ?').get(pedido.id));
+  return atualizado;
 }
 
 // Aviso automático do Mercado Pago. Só usamos o número do pagamento e conferimos tudo direto na API deles.
@@ -484,7 +508,7 @@ async function avisoMercadoPago(req, res, _p, url) {
   const id = url.searchParams.get('data.id') || corpo.data?.id || url.searchParams.get('id');
   if (tipo !== 'payment' || !/^\d{1,20}$/.test(String(id || ''))) return responder(res, 200, { ok: true });
   try {
-    aplicarPagamento(await buscarPagamento(String(id)));
+    aplicarPagamento(await buscarPagamento(String(id)), urlDoSite(req));
   } catch (erro) {
     console.error('Aviso do Mercado Pago:', erro.message);
     throw new ErroHttp(502, 'Tente de novo.'); // o Mercado Pago reenvia mais tarde
@@ -501,7 +525,7 @@ async function verPedido(req, res, [codigo], url) {
   if (pagamentoLigado() && /^\d{1,20}$/.test(String(pagamentoId || '')) && (pedido.mp_pagamento !== pagamentoId || pedido.status === 'aguardando')) {
     try {
       const pagamento = await buscarPagamento(pagamentoId);
-      if (pagamento.referencia === pedido.codigo) pedido = aplicarPagamento(pagamento) ?? pedido;
+      if (pagamento.referencia === pedido.codigo) pedido = aplicarPagamento(pagamento, urlDoSite(req)) ?? pedido;
     } catch (erro) {
       console.error('Conferindo pagamento:', erro.message);
     }
@@ -519,7 +543,216 @@ async function editarPedido(req, res, [id]) {
   if (!STATUS_PEDIDO.includes(status)) throw new ErroHttp(400, 'Status inválido.');
   const rastreio = corpo.rastreio === undefined ? linha.rastreio : texto(corpo.rastreio, 60, 'Rastreio');
   db.prepare(`UPDATE pedidos SET status = ?, rastreio = ?, atualizado_em = datetime('now') WHERE id = ?`).run(status, rastreio, linha.id);
-  responder(res, 200, paraPedido(db.prepare('SELECT * FROM pedidos WHERE id = ?').get(linha.id)));
+  const pedido = paraPedido(db.prepare('SELECT * FROM pedidos WHERE id = ?').get(linha.id));
+  if (status === 'enviado' && linha.status !== 'enviado') {
+    const cfg = lerConfig(db);
+    enviarDepois(cfg, emailPedidoEnviado(cfg, pedido, urlDoSite(req)));
+  }
+  responder(res, 200, { ...pedido, emailEnviado: status === 'enviado' && linha.status !== 'enviado' && emailLigado() });
+}
+
+// ---------- contas de clientes ----------
+const COOKIE_CLIENTE = 'loja_cliente';
+const COOKIE_CLIENTE_SEGURO = '__Host-loja_cliente';
+const SESSAO_CLIENTE_MS = 30 * 24 * 60 * 60 * 1000;
+const LINK_MS = 30 * 60 * 1000;
+const QUINZE_MIN = 15 * 60 * 1000;
+const scrypt = promisify(crypto.scrypt);
+const nomeCookieCliente = req => (conexaoSegura(req) ? COOKIE_CLIENTE_SEGURO : COOKIE_CLIENTE);
+const hashCliente = token => sha256(`cliente:${token}`);
+// Lax (e não Strict): quem chega pelo link do e-mail já entra logado. O que muda dados passa pelo conferirOrigem.
+function cookieCliente(req, valor, segundos) {
+  return `${nomeCookieCliente(req)}=${valor}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${segundos}${conexaoSegura(req) ? '; Secure' : ''}`;
+}
+function tokenCliente(req) {
+  const t = lerCookies(req)[nomeCookieCliente(req)];
+  return typeof t === 'string' && /^[A-Za-z0-9_-]{43}$/.test(t) ? t : null;
+}
+function sessaoCliente(req) {
+  const token = tokenCliente(req);
+  if (!token) return null;
+  const linha = db.prepare(`SELECT c.*, s.via FROM sessoes_clientes s JOIN clientes c ON c.id = s.cliente_id
+    WHERE s.token_hash = ? AND s.expira_em > ?`).get(hashCliente(token), Date.now());
+  return linha ? paraCliente(linha) : null;
+}
+function abrirSessaoCliente(req, res, clienteId, via) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  db.prepare('INSERT INTO sessoes_clientes (token_hash, cliente_id, via, expira_em) VALUES (?, ?, ?, ?)').run(hashCliente(token), clienteId, via, Date.now() + SESSAO_CLIENTE_MS);
+  res.setHeader('Set-Cookie', cookieCliente(req, token, SESSAO_CLIENTE_MS / 1000));
+}
+function exigirCliente(req) {
+  const cliente = sessaoCliente(req);
+  if (!cliente) throw new ErroHttp(401, 'Entre na sua conta para continuar.');
+  return cliente;
+}
+
+// Senha guardada como scrypt$sal$hash: nem quem abrir o banco consegue ler a senha.
+async function gerarHashSenha(senha) {
+  const sal = crypto.randomBytes(16);
+  return `scrypt$${sal.toString('hex')}$${(await scrypt(senha, sal, 64)).toString('hex')}`;
+}
+async function senhaDoClienteConfere(senha, guardado) {
+  const [, sal = '', hash = ''] = String(guardado || '').split('$');
+  const calculado = await scrypt(String(senha), Buffer.from(sal || '00', 'hex'), 64); // calcula mesmo sem conta: o tempo não entrega nada
+  const esperado = Buffer.from(hash, 'hex');
+  return esperado.length === 64 && crypto.timingSafeEqual(calculado, esperado);
+}
+function lerSenhaNova(v) {
+  if (typeof v !== 'string' || v.length < 8) throw new ErroHttp(400, 'A senha precisa ter pelo menos 8 caracteres.');
+  if (v.length > 200) throw new ErroHttp(400, 'Senha longa demais.');
+  return v;
+}
+const ehRobo = corpo => typeof corpo?.site === 'string' && corpo.site !== ''; // campo invisível: só robô preenche
+function limiteConta(req) {
+  if (!dentroDoLimite(`conta:${ipDe(req)}`, 10, QUINZE_MIN)) throw new ErroHttp(429, 'Muitas tentativas. Espere 15 minutos.');
+}
+
+async function criarConta(req, res) {
+  limiteConta(req);
+  const corpo = await lerJson(req);
+  if (ehRobo(corpo)) throw new ErroHttp(400, 'Não foi possível criar a conta.');
+  const nome = texto(corpo.nome, 120, 'Nome').replace(/\s+/g, ' ');
+  const email = lerEmail(corpo.email);
+  if (!nomeValido(nome)) throw new ErroHttp(400, 'Digite seu nome completo (nome e sobrenome).');
+  const senha = lerSenhaNova(corpo.senha);
+  if (db.prepare('SELECT 1 FROM clientes WHERE email = ?').get(email)) throw new ErroHttp(409, 'Já existe uma conta com esse e-mail. Entre com a senha ou use "Sem senha".');
+  const { lastInsertRowid } = db.prepare('INSERT INTO clientes (email, nome, senha) VALUES (?, ?, ?)').run(email, nome, await gerarHashSenha(senha));
+  abrirSessaoCliente(req, res, Number(lastInsertRowid), 'senha');
+  responder(res, 201, { ok: true });
+}
+
+async function entrarConta(req, res) {
+  limiteConta(req);
+  const corpo = await lerJson(req);
+  const email = lerEmail(corpo.email);
+  const linha = db.prepare('SELECT * FROM clientes WHERE email = ?').get(email);
+  const confere = await senhaDoClienteConfere(corpo.senha, linha?.senha);
+  if (ehRobo(corpo) || !linha || !confere) {
+    await new Promise(r => setTimeout(r, 400 + crypto.randomInt(400)));
+    if (linha && !linha.senha) throw new ErroHttp(401, 'Essa conta ainda não tem senha. Use "Sem senha" para receber um link no e-mail.');
+    throw new ErroHttp(401, 'E-mail ou senha incorretos.');
+  }
+  abrirSessaoCliente(req, res, linha.id, 'senha');
+  responder(res, 200, { ok: true });
+}
+
+async function pedirLink(req, res) {
+  if (!emailLigado()) throw new ErroHttp(503, 'A entrada sem senha ainda não está disponível. Entre com e-mail e senha.');
+  const corpo = await lerJson(req);
+  const email = lerEmail(corpo.email);
+  if (!dentroDoLimite(`link:${ipDe(req)}`, 5, QUINZE_MIN) || !dentroDoLimite(`link:${email}`, 3, QUINZE_MIN)) throw new ErroHttp(429, 'Muitos links pedidos. Espere 15 minutos.');
+  if (!ehRobo(corpo)) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    db.prepare('INSERT INTO links_entrada (token_hash, email, expira_em) VALUES (?, ?, ?)').run(hashCliente(token), email, Date.now() + LINK_MS);
+    const cfg = lerConfig(db);
+    try {
+      await enviarEmail(cfg, emailLinkEntrada(cfg, email, `${urlDoSite(req)}/conta/link/${token}`));
+    } catch (erro) {
+      console.error('Link de entrada:', erro.message);
+      throw new ErroHttp(502, 'Não consegui enviar o e-mail agora. Tente de novo em instantes.');
+    }
+  }
+  responder(res, 200, { ok: true });
+}
+
+// O link do e-mail abre uma página com um botão: robôs que "visitam" links de e-mail não gastam o link.
+async function usarLink(req, res) {
+  limiteConta(req);
+  const { token } = await lerJson(req);
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new ErroHttp(400, 'Link inválido.');
+  const hash = hashCliente(token);
+  const link = db.prepare('SELECT * FROM links_entrada WHERE token_hash = ? AND expira_em > ?').get(hash, Date.now());
+  db.prepare('DELETE FROM links_entrada WHERE token_hash = ?').run(hash);
+  if (!link) throw new ErroHttp(400, 'Esse link expirou ou já foi usado. Peça outro.');
+  db.prepare('INSERT OR IGNORE INTO clientes (email) VALUES (?)').run(link.email);
+  db.prepare('UPDATE clientes SET email_confirmado = 1 WHERE email = ?').run(link.email);
+  abrirSessaoCliente(req, res, db.prepare('SELECT id FROM clientes WHERE email = ?').get(link.email).id, 'link');
+  responder(res, 200, { ok: true });
+}
+
+function sairConta(req, res) {
+  const token = tokenCliente(req);
+  if (token) db.prepare('DELETE FROM sessoes_clientes WHERE token_hash = ?').run(hashCliente(token));
+  res.setHeader('Set-Cookie', cookieCliente(req, '', 0));
+  responder(res, 200, { ok: true });
+}
+
+const CAMPOS_ENDERECO = { telefone: 20, cep: 9, rua: 120, numero: 20, complemento: 80, bairro: 80, cidade: 80, uf: 2 };
+async function atualizarConta(req, res) {
+  const cliente = exigirCliente(req);
+  const corpo = await lerJson(req);
+  if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) throw new ErroHttp(400, 'Dados inválidos.');
+  const nome = 'nome' in corpo ? texto(corpo.nome, 120, 'Nome').replace(/\s+/g, ' ') : cliente.nome;
+  if (!nomeValido(nome)) throw new ErroHttp(400, 'Digite seu nome completo (nome e sobrenome).');
+  const dados = { ...cliente.dados };
+  for (const [campo, max] of Object.entries(CAMPOS_ENDERECO)) if (campo in corpo) dados[campo] = texto(corpo[campo], max, campo);
+  if (dados.telefone) dados.telefone = soDigitos(dados.telefone);
+  if (dados.cep) dados.cep = soDigitos(dados.cep);
+  if (dados.uf) dados.uf = dados.uf.toUpperCase();
+  if (corpo.senhaNova) {
+    limiteConta(req);
+    const senhaNova = lerSenhaNova(corpo.senhaNova);
+    // Quem entrou pelo link do e-mail já provou que é dono da conta (é o "esqueci a senha").
+    if (cliente.temSenha && cliente.via !== 'link') {
+      const linha = db.prepare('SELECT senha FROM clientes WHERE id = ?').get(cliente.id);
+      if (!(await senhaDoClienteConfere(corpo.senhaAtual ?? '', linha.senha))) throw new ErroHttp(400, 'A senha atual não confere.');
+    }
+    db.prepare('UPDATE clientes SET senha = ? WHERE id = ?').run(await gerarHashSenha(senhaNova), cliente.id);
+  }
+  db.prepare('UPDATE clientes SET nome = ?, dados = ? WHERE id = ?').run(nome, JSON.stringify(dados), cliente.id);
+  responder(res, 200, { ok: true });
+}
+
+function pedidosDoCliente(cliente) {
+  // Pedidos feitos logado; com o e-mail confirmado, também os feitos antes de ter conta.
+  return db.prepare(`SELECT * FROM pedidos WHERE cliente_id = ? OR (? = 1 AND json_extract(cliente, '$.email') = ?) ORDER BY id DESC LIMIT 50`)
+    .all(cliente.id, cliente.email_confirmado ? 1 : 0, cliente.email).map(paraPedido);
+}
+function verConta(req, res) {
+  const cliente = sessaoCliente(req);
+  res.setHeader('Cache-Control', 'no-store');
+  html(res, 200, paginaConta(lerConfig(db), listarVisiveis(), { cliente, pedidos: cliente ? pedidosDoCliente(cliente) : [], semSenhaLigado: emailLigado() }));
+}
+const dadosParaCheckout = cliente => (cliente ? { nome: cliente.nome, email: cliente.email, ...cliente.dados } : null);
+
+// ---------- depoimentos ----------
+const listarDepoimentos = () => db.prepare('SELECT * FROM depoimentos WHERE aprovado = 1 ORDER BY id DESC LIMIT 60').all();
+function lerDepoimento(corpo) {
+  if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) throw new ErroHttp(400, 'Dados inválidos.');
+  const d = {
+    nome: texto(corpo.nome, 60, 'Nome').replace(/\s+/g, ' '),
+    cidade: texto(corpo.cidade, 60, 'Cidade'),
+    texto: texto(corpo.texto, 1000, 'Depoimento'),
+    nota: Number(corpo.nota),
+  };
+  if (d.nome.length < 2) throw new ErroHttp(400, 'Digite seu nome.');
+  if (d.texto.length < 10) throw new ErroHttp(400, 'Escreva um pouco mais sobre a sua experiência.');
+  if (!Number.isInteger(d.nota) || d.nota < 1 || d.nota > 5) throw new ErroHttp(400, 'Escolha de 1 a 5 estrelas.');
+  return d;
+}
+async function criarDepoimento(req, res) {
+  if (!dentroDoLimite(`depoimento:${ipDe(req)}`, 3, 60 * 60 * 1000)) throw new ErroHttp(429, 'Você já mandou depoimentos agora há pouco. Tente mais tarde.');
+  const corpo = await lerJson(req);
+  if (ehRobo(corpo)) return responder(res, 201, { ok: true });
+  const d = lerDepoimento(corpo);
+  // Entra escondido: só aparece no site depois que a loja aprovar no painel.
+  db.prepare('INSERT INTO depoimentos (nome, cidade, texto, nota, cliente_id) VALUES (?, ?, ?, ?, ?)').run(d.nome, d.cidade, d.texto, d.nota, sessaoCliente(req)?.id ?? null);
+  responder(res, 201, { ok: true });
+}
+async function criarDepoimentoAdmin(req, res) {
+  const d = lerDepoimento(await lerJson(req));
+  const { lastInsertRowid } = db.prepare('INSERT INTO depoimentos (nome, cidade, texto, nota, aprovado) VALUES (?, ?, ?, ?, 1)').run(d.nome, d.cidade, d.texto, d.nota);
+  responder(res, 201, db.prepare('SELECT * FROM depoimentos WHERE id = ?').get(Number(lastInsertRowid)));
+}
+async function editarDepoimento(req, res, [id]) {
+  const corpo = await lerJson(req);
+  const { changes } = db.prepare('UPDATE depoimentos SET aprovado = ? WHERE id = ?').run(corpo.aprovado === true ? 1 : 0, Number(id));
+  if (!changes) throw new ErroHttp(404, 'Depoimento não encontrado.');
+  responder(res, 200, db.prepare('SELECT * FROM depoimentos WHERE id = ?').get(Number(id)));
+}
+function excluirDepoimento(req, res, [id]) {
+  db.prepare('DELETE FROM depoimentos WHERE id = ?').run(Number(id));
+  responder(res, 200, { ok: true });
 }
 
 // ---------- configuração do site ----------
@@ -529,7 +762,7 @@ const CAMPOS_TEXTO = {
 };
 // Medidas da caixa padrão: [mínimo, máximo] em kg ou cm.
 const CAMPOS_PACOTE = { pacotePeso: [0.01, 30], pacoteAltura: [1, 100], pacoteLargura: [8, 100], pacoteComprimento: [13, 100] };
-const configPainel = () => ({ ...lerConfig(db), integracoes: { frete: Boolean(process.env.SUPERFRETE_TOKEN), pagamento: pagamentoLigado() } });
+const configPainel = () => ({ ...lerConfig(db), integracoes: { frete: Boolean(process.env.SUPERFRETE_TOKEN), pagamento: pagamentoLigado(), email: emailLigado() } });
 async function salvarAparencia(req, res) {
   const corpo = await lerJson(req, MAX_CORPO);
   if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) throw new ErroHttp(400, 'Dados inválidos.');
@@ -597,7 +830,7 @@ async function salvarAparencia(req, res) {
 
 // ---------- páginas ----------
 function inicio(req, res) {
-  html(res, 200, paginaInicio(lerConfig(db), listarVisiveis()));
+  html(res, 200, paginaInicio(lerConfig(db), listarVisiveis(), listarDepoimentos().slice(0, 12)));
 }
 function catalogo(req, res, _p, url) {
   const q = Object.fromEntries(['categoria', 'marca', 'ordem', 'busca'].map(k => [k, String(url.searchParams.get(k) || '').slice(0, 80)]));
@@ -636,7 +869,21 @@ const ROTAS = [
   ['GET', /^\/pecas\/?$/, catalogo],
   ['GET', /^\/peca\/([a-z0-9-]+)$/, peca],
   ['GET', /^\/favoritos\/?$/, (req, res) => html(res, 200, paginaFavoritos(lerConfig(db), listarVisiveis()))],
-  ['GET', /^\/checkout\/?$/, (req, res) => { const cfg = lerConfig(db); html(res, 200, paginaCheckout(cfg, listarVisiveis(), freteLigado(cfg) && pagamentoLigado())); }],
+  ['GET', /^\/checkout\/?$/, (req, res) => {
+    const cfg = lerConfig(db);
+    res.setHeader('Cache-Control', 'no-store');
+    html(res, 200, paginaCheckout(cfg, listarVisiveis(), freteLigado(cfg) && pagamentoLigado(), dadosParaCheckout(sessaoCliente(req))));
+  }],
+  ['GET', /^\/conta\/?$/, verConta],
+  ['GET', /^\/conta\/link\/([A-Za-z0-9_-]{43})$/, (req, res, [token]) => { res.setHeader('Cache-Control', 'no-store'); html(res, 200, paginaLinkEntrada(lerConfig(db), listarVisiveis(), token)); }],
+  ['GET', /^\/depoimentos\/?$/, (req, res) => html(res, 200, paginaDepoimentos(lerConfig(db), listarVisiveis(), listarDepoimentos(), sessaoCliente(req)?.nome ?? ''))],
+  ['POST', /^\/api\/conta\/criar$/, criarConta],
+  ['POST', /^\/api\/conta\/entrar$/, entrarConta],
+  ['POST', /^\/api\/conta\/link$/, pedirLink],
+  ['POST', /^\/api\/conta\/link\/entrar$/, usarLink],
+  ['POST', /^\/api\/conta\/sair$/, sairConta],
+  ['PATCH', /^\/api\/conta$/, atualizarConta],
+  ['POST', /^\/api\/depoimentos$/, criarDepoimento],
   ['GET', /^\/pedido\/([A-Za-z0-9_-]{12})$/, verPedido],
   ['POST', /^\/api\/frete$/, calcularFrete],
   ['GET', /^\/api\/cep\/(\d{5}-?\d{3})$/, buscarEndereco],
@@ -645,7 +892,7 @@ const ROTAS = [
   ['GET', /^\/admin\/?$/, (req, res) => { res.setHeader('Cache-Control', 'no-store'); html(res, 200, paginaAdmin()); }],
   ['GET', /^\/fotos\/([^/]+)$/, servirFoto],
   ['GET', /^\/static\/(.+)$/, estatico],
-  ['GET', /^\/robots\.txt$/, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /checkout\nDisallow: /pedido/\n'); }],
+  ['GET', /^\/robots\.txt$/, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /checkout\nDisallow: /pedido/\nDisallow: /conta\n'); }],
   ['GET', /^\/api\/sessao$/, (req, res) => responder(res, 200, { logado: logado(req), painelLigado: !motivoPainelDesligado(), motivo: motivoPainelDesligado() })],
   ['POST', /^\/api\/entrar$/, entrar],
   ['POST', /^\/api\/sair$/, sair],
@@ -655,6 +902,10 @@ const ROTAS = [
   ['DELETE', /^\/api\/admin\/pecas\/(\d+)$/, exigirLogin(excluirPeca)],
   ['GET', /^\/api\/admin\/pedidos$/, exigirLogin((req, res) => responder(res, 200, db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 300').all().map(paraPedido)))],
   ['PATCH', /^\/api\/admin\/pedidos\/(\d+)$/, exigirLogin(editarPedido)],
+  ['GET', /^\/api\/admin\/depoimentos$/, exigirLogin((req, res) => responder(res, 200, db.prepare('SELECT * FROM depoimentos ORDER BY aprovado, id DESC LIMIT 500').all()))],
+  ['POST', /^\/api\/admin\/depoimentos$/, exigirLogin(criarDepoimentoAdmin)],
+  ['PATCH', /^\/api\/admin\/depoimentos\/(\d+)$/, exigirLogin(editarDepoimento)],
+  ['DELETE', /^\/api\/admin\/depoimentos\/(\d+)$/, exigirLogin(excluirDepoimento)],
   ['GET', /^\/api\/admin\/aparencia$/, exigirLogin((req, res) => responder(res, 200, configPainel()))],
   ['PATCH', /^\/api\/admin\/aparencia$/, exigirLogin(salvarAparencia)],
 ];
@@ -735,10 +986,12 @@ servidor.headersTimeout = 20 * 1000;
 servidor.requestTimeout = 120 * 1000;
 servidor.keepAliveTimeout = 10 * 1000;
 
-setInterval(() => db.prepare('DELETE FROM sessoes WHERE expira_em < ?').run(Date.now()), 60 * 60 * 1000).unref();
+setInterval(() => {
+  for (const tabela of ['sessoes', 'sessoes_clientes', 'links_entrada']) db.prepare(`DELETE FROM ${tabela} WHERE expira_em < ?`).run(Date.now());
+}, 60 * 60 * 1000).unref();
 setInterval(() => {
   const agora = Date.now();
-  for (const [chave, lista] of janelas) if (!lista.some(t => agora - t < 60 * 1000)) janelas.delete(chave);
+  for (const [chave, lista] of janelas) if (!lista.some(t => agora - t < 60 * 60 * 1000)) janelas.delete(chave); // a maior janela usada é de 1 hora
   for (const [ip, lista] of tentativas) if (!lista.some(t => agora - t < 15 * 60 * 1000)) tentativas.delete(ip);
 }, 5 * 60 * 1000).unref();
 

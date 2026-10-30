@@ -45,6 +45,27 @@ PAGAMENTO E FRETE NO SITE (Mercado Pago + SuperFrete)
      Depois de postar, mude a situação para "Enviado" e cole o código de rastreio.
   A etiqueta continua sendo gerada no site da SuperFrete, com os dados que aparecem no pedido.
 
+E-MAILS AUTOMÁTICOS (Brevo, grátis até 300 e-mails por dia)
+  Com isso ligado, o cliente recebe e-mail quando o pagamento é aprovado e quando o pedido é
+  enviado (com o rastreio), e você recebe um aviso de venda nova. Também libera o "Sem senha"
+  (entrar na conta por um link no e-mail, que serve de "esqueci minha senha").
+  1) Crie a conta em brevo.com.
+  2) Em "Remetentes" (Senders), cadastre o e-mail que vai aparecer como remetente e confirme
+     pelo código que chega nele.
+  3) Em "SMTP e API" > "Chaves de API", gere uma chave (começa com xkeysib-).
+  4) No Render, em "Environment", crie:
+       BREVO_API_KEY       a chave do Brevo
+       EMAIL_REMETENTE     o e-mail confirmado no passo 2
+  5) No painel > "Contato e textos", preencha o E-mail: é para ele que vão os avisos de venda
+     e é ele que recebe as respostas dos clientes.
+  Dica: com domínio próprio (ex.: contato@frclub.com.br) os e-mails caem menos no spam.
+
+CONTAS DE CLIENTES E DEPOIMENTOS
+  - O bonequinho do topo abre a conta do cliente: criar conta, entrar e ver os pedidos.
+    O painel da loja agora fica no link "Área do lojista", no rodapé (ou /admin).
+  - Depoimentos enviados pelo site só aparecem depois que você aprovar na aba "Depoimentos".
+    Elogios que chegarem por WhatsApp ou Instagram podem ser cadastrados lá também.
+
 DOMÍNIO PRÓPRIO (ex.: frclub.com.br)
   Compre em registro.br. No Render: Settings > Custom Domains > Add, e siga o passo a passo.
 

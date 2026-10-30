@@ -153,6 +153,79 @@
     if (!r.ok) throw new Error(resposta?.erro || 'Algo deu errado. Tente de novo.');
     return resposta;
   }
+  async function enviar(metodo, caminho, corpo) {
+    if (metodo === 'POST') return postar(caminho, corpo);
+    let r;
+    try {
+      r = await fetch(caminho, { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    } catch {
+      throw new Error('Sem conexão. Confira a internet e tente de novo.');
+    }
+    const resposta = await r.json().catch(() => null);
+    if (!r.ok) throw new Error(resposta?.erro || 'Algo deu errado. Tente de novo.');
+    return resposta;
+  }
+
+  // ---------- conferência dos campos (o servidor confere de novo) ----------
+  function cpfValido(cpf) {
+    if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+    for (const n of [9, 10]) {
+      let soma = 0;
+      for (let i = 0; i < n; i++) soma += Number(cpf[i]) * (n + 1 - i);
+      if (((soma * 10) % 11) % 10 !== Number(cpf[n])) return false;
+    }
+    return true;
+  }
+  const NOME_COMPLETO = /^\p{L}{2,}(?: [\p{L}'.-]+)* [\p{L}'.-]{2,}$/u;
+  const REGRAS = {
+    nome: v => (NOME_COMPLETO.test(v.replace(/\s+/g, ' ').trim()) ? '' : 'Digite seu nome completo (nome e sobrenome), só com letras.'),
+    email: v => (/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(v.trim()) ? '' : 'E-mail inválido.'),
+    cpf: v => (cpfValido(v.replace(/\D/g, '')) ? '' : 'CPF inválido.'),
+    telefone: v => { const n = v.replace(/\D/g, ''); return n.length >= 10 && n.length <= 11 ? '' : 'Celular inválido: DDD + número.'; },
+    cep: v => (v.replace(/\D/g, '').length === 8 ? '' : 'CEP inválido.'),
+    uf: v => (/^[A-Za-z]{2}$/.test(v.trim()) ? '' : 'Use a sigla, como BA ou SP.'),
+    senha: v => (v.length >= 8 ? '' : 'A senha precisa ter pelo menos 8 caracteres.'),
+    senhaNova: v => (v.length >= 8 ? '' : 'A senha precisa ter pelo menos 8 caracteres.'),
+  };
+  // Mostra o erro embaixo do campo. Campo opcional vazio passa.
+  function conferirCampo(input) {
+    const v = input.value;
+    let msg = '';
+    if (!v.trim()) msg = input.required ? 'Preencha este campo.' : '';
+    // No login a senha não é conferida aqui; no depoimento basta o primeiro nome.
+    else if (REGRAS[input.name] && !(input.form?.dataset.formConta === 'entrar' && input.name === 'senha')
+      && !(input.form?.hasAttribute('data-form-depoimento') && input.name === 'nome')) msg = REGRAS[input.name](v);
+    const aviso = input.parentElement.querySelector('.campo-erro');
+    input.setAttribute('aria-invalid', String(Boolean(msg)));
+    if (aviso) { aviso.textContent = msg; aviso.hidden = !msg; }
+    return !msg;
+  }
+  function conferirForm(form) {
+    const campos = [...form.querySelectorAll('.campo input')].filter(i => i.name !== 'site');
+    const ruins = campos.filter(i => !conferirCampo(i));
+    ruins[0]?.focus();
+    return !ruins.length;
+  }
+  // Confere ao sair do campo; depois do primeiro erro, confere a cada letra até ficar certo.
+  document.addEventListener('focusout', e => { if (e.target.matches?.('.campo input') && e.target.value) conferirCampo(e.target); });
+  document.addEventListener('input', e => { if (e.target.matches?.('.campo input[aria-invalid="true"]')) conferirCampo(e.target); });
+  $$('[data-cpf]').forEach(input => input.addEventListener('input', () => {
+    const n = input.value.replace(/\D/g, '').slice(0, 11);
+    input.value = n.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2');
+  }));
+  $$('[data-telefone]').forEach(input => input.addEventListener('input', () => {
+    const n = input.value.replace(/\D/g, '').slice(0, 11);
+    input.value = n.length > 10 ? `(${n.slice(0, 2)}) ${n.slice(2, 7)}-${n.slice(7)}` : n.length > 6 ? `(${n.slice(0, 2)}) ${n.slice(2, 6)}-${n.slice(6)}` : n.length > 2 ? `(${n.slice(0, 2)}) ${n.slice(2)}` : n;
+  }));
+  // Endereço pelo CEP, sem apagar o que a pessoa já digitou.
+  function preencherEndereco(form, cep) {
+    return fetch(`/api/cep/${cep}`).then(r => (r.ok ? r.json() : null)).then(end => {
+      if (!end) return;
+      for (const k of ['rua', 'bairro', 'cidade', 'uf']) if (end[k] && form[k] && !form[k].value) { form[k].value = end[k]; conferirCampo(form[k]); }
+      if (form.numero && !form.numero.value) form.numero.focus();
+    }).catch(() => {});
+  }
+
   const prazo = o => (o.prazo ? `até ${o.prazo} ${o.prazo === 1 ? 'dia útil' : 'dias úteis'}` : '');
   const nomeFrete = o => `${o.empresa && !o.nome.toLowerCase().includes(o.empresa.toLowerCase()) ? `${o.empresa} ` : ''}${o.nome}`;
 
@@ -182,8 +255,11 @@
     const subtotal = sacola.reduce((t, p) => t + (p.preco || 0), 0);
     let opcoes = [];
     let cepCotado = '';
-    const salvo = ler('frclub-cliente', {});
-    for (const [k, v] of Object.entries(salvo)) if (checkout[k] && typeof v === 'string') checkout[k].value = v;
+    // Com conta, os dados vêm dela; sem conta, do que ficou guardado neste aparelho.
+    let conta = null;
+    try { conta = JSON.parse(checkout.dataset.conta || 'null'); } catch {}
+    const salvo = conta ?? ler('frclub-cliente', {});
+    for (const [k, v] of Object.entries(salvo)) if (checkout[k] && typeof v === 'string' && v) { checkout[k].value = v; checkout[k].dispatchEvent(new Event('input')); }
 
     if (!sacola.length) {
       checkout.innerHTML = '<p class="vazio">Sua sacola está vazia. <a href="/pecas">Ver as peças</a></p>';
@@ -206,12 +282,7 @@
       if (cep.length !== 8 || cep === cepCotado) return;
       cepCotado = cep;
       saida.innerHTML = '<p class="nota">Calculando o frete…</p>';
-      // Preenche o endereço pelo CEP, sem apagar o que a pessoa já digitou.
-      fetch(`/api/cep/${cep}`).then(r => (r.ok ? r.json() : null)).then(end => {
-        if (!end) return;
-        for (const k of ['rua', 'bairro', 'cidade', 'uf']) if (end[k] && !checkout[k].value) checkout[k].value = end[k];
-        if (!checkout.numero.value) checkout.numero.focus();
-      }).catch(() => {});
+      preencherEndereco(checkout, cep);
       try {
         opcoes = await postar('/api/frete', { cep, itens: itensPedido() });
         saida.innerHTML = opcoes.map((o, i) => `
@@ -237,9 +308,8 @@
       const frete = checkout.querySelector('input[name="frete"]:checked')?.value;
       const campos = ['nome', 'email', 'telefone', 'cpf', 'cep', 'rua', 'numero', 'complemento', 'bairro', 'cidade', 'uf'];
       const cliente = Object.fromEntries(campos.map(k => [k, checkout[k].value.trim()]));
-      const faltando = campos.find(k => checkout[k].required && !cliente[k]);
       const mostrar = texto => { erro.textContent = texto; erro.hidden = false; };
-      if (faltando) { checkout[faltando].focus(); return mostrar('Preencha todos os campos.'); }
+      if (!conferirForm(checkout)) return mostrar('Confira os campos marcados em vermelho.');
       if (!frete) return mostrar('Digite o CEP e escolha a forma de entrega.');
       const { cpf, ...lembrar } = cliente; // o CPF não fica guardado no aparelho
       gravar('frclub-cliente', lembrar);
@@ -257,6 +327,67 @@
       }
     });
   }
+
+  // ---------- conta ----------
+  const voltarPara = () => { const v = new URLSearchParams(location.search).get('voltar') || ''; return /^\/(?!\/)/.test(v) ? v : '/conta'; };
+  function mostrarAba(nome) {
+    $$('[data-aba-conta]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.abaConta === nome)));
+    $$('[data-form-conta]').forEach(f => { f.hidden = f.dataset.formConta !== nome; });
+    $(`[data-form-conta="${nome}"] input:not([name="site"])`)?.focus();
+  }
+  $$('[data-aba-conta]').forEach(b => b.addEventListener('click', () => mostrarAba(b.dataset.abaConta)));
+  $$('[data-ir-aba]').forEach(b => b.addEventListener('click', () => {
+    const email = $('[data-form-conta="entrar"]').email.value;
+    mostrarAba(b.dataset.irAba);
+    if (email) $('[data-form-conta="link"]').email.value = email;
+  }));
+  // Envia um formulário com o botão travado e mostra o erro dentro dele.
+  function aoEnviar(form, acao) {
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const erro = $('.form-erro', form);
+      const ok = $('.form-ok', form);
+      erro.hidden = true;
+      if (ok) ok.hidden = true;
+      if (!conferirForm(form)) return;
+      const botao = $('button[type="submit"]', form);
+      botao.disabled = true;
+      try {
+        const aviso = await acao(Object.fromEntries(new FormData(form)));
+        if (aviso && ok) { ok.textContent = aviso; ok.hidden = false; }
+      } catch (falha) {
+        erro.textContent = falha.message;
+        erro.hidden = false;
+      } finally {
+        botao.disabled = false;
+      }
+    });
+  }
+  const formConta = nome => $(`[data-form-conta="${nome}"]`);
+  if (formConta('entrar')) aoEnviar(formConta('entrar'), async d => { await postar('/api/conta/entrar', d); location.href = voltarPara(); });
+  if (formConta('criar')) aoEnviar(formConta('criar'), async d => { await postar('/api/conta/criar', d); location.href = voltarPara(); });
+  if (formConta('link')) aoEnviar(formConta('link'), async d => {
+    await postar('/api/conta/link', d);
+    return `Pronto! Se o e-mail estiver certo, o link chega em instantes. Confira também o spam.`;
+  });
+  if (formConta('dados')) {
+    const f = formConta('dados');
+    f.cep.addEventListener('input', () => { const cep = f.cep.value.replace(/\D/g, ''); if (cep.length === 8) preencherEndereco(f, cep); });
+    aoEnviar(f, async d => { await enviar('PATCH', '/api/conta', d); location.reload(); });
+  }
+  if (formConta('senha')) aoEnviar(formConta('senha'), async d => { await enviar('PATCH', '/api/conta', d); location.reload(); });
+  $('[data-sair-conta]')?.addEventListener('click', async () => { await postar('/api/conta/sair', {}).catch(() => {}); location.href = '/'; });
+  const formLink = $('[data-usar-link]');
+  if (formLink) aoEnviar(formLink, async () => { await postar('/api/conta/link/entrar', { token: formLink.dataset.usarLink }); location.replace('/conta'); });
+
+  // ---------- depoimentos ----------
+  const formDepoimento = $('[data-form-depoimento]');
+  if (formDepoimento) aoEnviar(formDepoimento, async d => {
+    if (String(d.texto || '').trim().length < 10) throw new Error('Escreva um pouco mais sobre a sua experiência.');
+    await postar('/api/depoimentos', { ...d, nota: Number(d.nota) });
+    formDepoimento.texto.value = '';
+    return 'Obrigado! Seu depoimento aparece aqui assim que a loja aprovar.';
+  });
 
   // ---------- página do pedido ----------
   const pedido = $('.pedido');

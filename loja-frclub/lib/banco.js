@@ -1,4 +1,4 @@
-// Banco da loja (SQLite que já vem no Node): peças, configuração do site e sessões do painel.
+// Banco da loja (SQLite que já vem no Node): peças, configuração, pedidos, contas de clientes e depoimentos.
 import { DatabaseSync } from 'node:sqlite';
 
 export const CONFIG_PADRAO = {
@@ -92,9 +92,47 @@ export function abrirBanco(arquivo) {
       criado_em TEXT NOT NULL DEFAULT (datetime('now')),
       atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- senha vazia = a conta só entra pelo link enviado no e-mail
+    CREATE TABLE IF NOT EXISTS clientes (
+      id INTEGER PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      nome TEXT NOT NULL DEFAULT '',
+      senha TEXT NOT NULL DEFAULT '',
+      email_confirmado INTEGER NOT NULL DEFAULT 0,
+      dados TEXT NOT NULL DEFAULT '{}',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- via: 'senha' ou 'link' (quem entrou pelo link do e-mail pode trocar a senha sem a antiga)
+    CREATE TABLE IF NOT EXISTS sessoes_clientes (
+      token_hash TEXT PRIMARY KEY,
+      cliente_id INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+      via TEXT NOT NULL,
+      expira_em INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS links_entrada (
+      token_hash TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      expira_em INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS depoimentos (
+      id INTEGER PRIMARY KEY,
+      nome TEXT NOT NULL,
+      cidade TEXT NOT NULL DEFAULT '',
+      texto TEXT NOT NULL,
+      nota INTEGER NOT NULL DEFAULT 5,
+      aprovado INTEGER NOT NULL DEFAULT 0,
+      cliente_id INTEGER,
+      criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+  // Colunas que chegaram depois (bancos antigos não têm).
+  if (!db.prepare('PRAGMA table_info(pedidos)').all().some(c => c.name === 'cliente_id')) db.exec('ALTER TABLE pedidos ADD COLUMN cliente_id INTEGER');
   db.prepare('INSERT OR IGNORE INTO config (id, dados) VALUES (1, ?)').run('{}');
-  db.prepare('DELETE FROM sessoes WHERE expira_em < ?').run(Date.now());
+  for (const tabela of ['sessoes', 'sessoes_clientes', 'links_entrada']) db.prepare(`DELETE FROM ${tabela} WHERE expira_em < ?`).run(Date.now());
   return db;
 }
 
@@ -110,6 +148,11 @@ export function salvarConfig(db, mudancas) {
 
 export function paraPedido(linha) {
   return { ...linha, itens: JSON.parse(linha.itens || '[]'), cliente: JSON.parse(linha.cliente || '{}') };
+}
+
+export function paraCliente(linha) {
+  const { senha, ...resto } = linha;
+  return { ...resto, temSenha: Boolean(senha), email_confirmado: Boolean(linha.email_confirmado), dados: JSON.parse(linha.dados || '{}') };
 }
 
 export function paraProduto(linha) {

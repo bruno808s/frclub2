@@ -101,7 +101,7 @@ function telaEntrar() {
 }
 
 // ---------- moldura do painel ----------
-const ABAS = [['pecas', 'Peças'], ['pedidos', 'Pedidos'], ['aparencia', 'Aparência'], ['textos', 'Contato e textos'], ['entrega', 'Entrega e pagamento']];
+const ABAS = [['pecas', 'Peças'], ['pedidos', 'Pedidos'], ['depoimentos', 'Depoimentos'], ['aparencia', 'Aparência'], ['textos', 'Contato e textos'], ['entrega', 'Entrega e pagamento']];
 function telaPainel(aba) {
   raiz.innerHTML = `
   <header class="painel-topo">
@@ -120,6 +120,7 @@ function telaPainel(aba) {
   const corpo = raiz.querySelector('[data-corpo]');
   if (aba === 'pecas') abaPecas(corpo);
   else if (aba === 'pedidos') abaPedidos(corpo);
+  else if (aba === 'depoimentos') abaDepoimentos(corpo);
   else abaConfig(corpo, aba);
 }
 
@@ -379,11 +380,92 @@ async function abaPedidos(corpo) {
     try {
       const novo = await api('PATCH', `/admin/pedidos/${id}`, { status: card.querySelector('[data-status]').value, rastreio: card.querySelector('[data-rastreio]').value });
       pedidos = pedidos.map(p => (p.id === id ? novo : p));
-      avisar('Pedido salvo. O cliente vê a mudança na página do pedido.');
+      avisar(novo.emailEnviado ? 'Pedido salvo. O cliente recebe um e-mail com o rastreio.' : 'Pedido salvo. O cliente vê a mudança na página do pedido.');
       desenhar();
     } catch (falha) {
       avisar(falha.message, 'erro');
       botao.disabled = false;
+    }
+  });
+}
+
+// ---------- depoimentos ----------
+async function abaDepoimentos(corpo) {
+  corpo.innerHTML = '<p class="nota">Carregando…</p>';
+  let lista;
+  try {
+    lista = await api('GET', '/admin/depoimentos');
+  } catch (e) {
+    corpo.innerHTML = `<p class="erro">${esc(e.message)}</p>`;
+    return;
+  }
+  const estrelas = n => '★'.repeat(n) + '☆'.repeat(5 - n);
+  corpo.innerHTML = `
+    <div class="cabeca-aba">
+      <div><h1>Depoimentos</h1><p class="nota">${lista.filter(d => !d.aprovado).length} esperando aprovação · ${lista.filter(d => d.aprovado).length} no site</p></div>
+    </div>
+    <p class="nota" style="margin-bottom:14px">Os depoimentos enviados pelo site só aparecem depois que você aprovar. Recebeu um elogio no WhatsApp ou Instagram? Cadastre abaixo.</p>
+    <ul class="lista-pedidos" data-lista></ul>
+    <form class="bloco grade-campos" data-novo novalidate style="margin-top:24px">
+      <h2 class="largo">Cadastrar depoimento</h2>
+      <label class="campo"><span>Nome</span><input name="nome" maxlength="60" required></label>
+      <label class="campo"><span>Cidade (opcional)</span><input name="cidade" maxlength="60"></label>
+      <label class="campo"><span>Nota</span><select name="nota">${[5, 4, 3, 2, 1].map(n => `<option value="${n}">${estrelas(n)}</option>`).join('')}</select></label>
+      <label class="campo largo"><span>Depoimento</span><textarea name="texto" rows="4" maxlength="1000" required></textarea></label>
+      <p class="erro largo" role="alert" hidden></p>
+      <div><button class="botao" type="submit">Publicar no site</button></div>
+    </form>`;
+  const ul = corpo.querySelector('[data-lista]');
+  const desenhar = () => {
+    ul.innerHTML = lista.length ? lista.map(d => `
+      <li class="pedido-card" data-id="${d.id}">
+        <div class="pedido-topo">
+          <div><b>${esc(d.nome)}</b><span class="nota">${d.cidade ? ` · ${esc(d.cidade)}` : ''} · ${new Date(`${d.criado_em.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR')}</span></div>
+          <span class="selo-status ${d.aprovado ? 'status-pago' : ''}">${d.aprovado ? 'No site' : 'Esperando aprovação'}</span>
+        </div>
+        <p>${estrelas(d.nota)}</p>
+        <p style="white-space:pre-line">${esc(d.texto)}</p>
+        <div class="linha-botoes">
+          <button class="botao ${d.aprovado ? 'botao-linha' : ''}" type="button" data-aprovar="${d.aprovado ? '0' : '1'}">${d.aprovado ? 'Tirar do site' : 'Aprovar'}</button>
+          <button class="link perigo" type="button" data-excluir>Excluir</button>
+        </div>
+      </li>`).join('') : '<li class="nota vazio">Nenhum depoimento ainda. Eles aparecem aqui quando alguém envia pelo site.</li>';
+  };
+  desenhar();
+  ul.addEventListener('click', async e => {
+    const card = e.target.closest('[data-id]');
+    if (!card) return;
+    const id = Number(card.dataset.id);
+    try {
+      if (e.target.closest('[data-aprovar]')) {
+        const novo = await api('PATCH', `/admin/depoimentos/${id}`, { aprovado: e.target.closest('[data-aprovar]').dataset.aprovar === '1' });
+        lista = lista.map(d => (d.id === id ? novo : d));
+        avisar(novo.aprovado ? 'Aprovado. Já está no site.' : 'Saiu do site.');
+      } else if (e.target.closest('[data-excluir]')) {
+        if (!confirm('Excluir este depoimento? Não dá para desfazer.')) return;
+        await api('DELETE', `/admin/depoimentos/${id}`);
+        lista = lista.filter(d => d.id !== id);
+        avisar('Depoimento excluído.');
+      } else return;
+      desenhar();
+    } catch (falha) {
+      avisar(falha.message, 'erro');
+    }
+  });
+  const form = corpo.querySelector('[data-novo]');
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const erro = form.querySelector('.erro');
+    erro.hidden = true;
+    try {
+      const novo = await api('POST', '/admin/depoimentos', { nome: form.nome.value, cidade: form.cidade.value, nota: Number(form.nota.value), texto: form.texto.value });
+      lista = [novo, ...lista];
+      form.reset();
+      desenhar();
+      avisar('Depoimento publicado.');
+    } catch (falha) {
+      erro.textContent = falha.message;
+      erro.hidden = false;
     }
   });
 }
@@ -450,7 +532,9 @@ async function abaConfig(corpo, aba) {
         ${ligado(cfg.integracoes.pagamento, 'Mercado Pago ligado: o cliente paga no site.', 'Mercado Pago desligado: falta a variável MP_ACCESS_TOKEN no Render.')}
         ${ligado(cfg.integracoes.frete, 'SuperFrete ligado.', 'SuperFrete desligado: falta a variável SUPERFRETE_TOKEN no Render.')}
         ${ligado(/^\d{8}$/.test(cfg.cepOrigem), 'CEP de origem preenchido.', 'Falta o CEP de onde as peças saem (abaixo).')}
-        <p class="nota">Enquanto algum item estiver desligado, a sacola continua finalizando pelo WhatsApp.</p>
+        <p class="nota">Enquanto algum item acima estiver desligado, a sacola continua finalizando pelo WhatsApp.</p>
+        ${ligado(cfg.integracoes.email, 'E-mails ligados (Brevo): o cliente recebe a confirmação do pedido e o rastreio.', 'E-mails desligados: faltam as variáveis BREVO_API_KEY e EMAIL_REMETENTE no Render.')}
+        <p class="nota">Os avisos de venda nova vão para o e-mail da aba "Contato e textos".</p>
       </section>
       <section class="bloco grade-campos">
         <h2 class="largo">De onde as peças saem</h2>
