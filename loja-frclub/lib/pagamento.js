@@ -29,7 +29,14 @@ async function chamar(url, opcoes, servico) {
 // ---------- frete ----------
 // Cada peça vai como um volume com as medidas padrão do painel; a SuperFrete monta a caixa ideal.
 export async function cotarFrete(cfg, cepDestino, quantidade, valorDeclarado) {
-  const lista = await chamar(`${SUPERFRETE_URL}/api/v0/calculator`, {
+  const opcoes = await cotarUmaVez(cfg, cepDestino, quantidade, valorDeclarado);
+  // Os Correios recusam valor declarado fora dos limites de cada serviço; sem seguro a cotação sai mesmo assim.
+  if (!opcoes.length && valorDeclarado > 0) return cotarUmaVez(cfg, cepDestino, quantidade, 0);
+  return opcoes;
+}
+
+async function cotarUmaVez(cfg, cepDestino, quantidade, valorDeclarado) {
+  const resposta = await chamar(`${SUPERFRETE_URL}/api/v0/calculator`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.SUPERFRETE_TOKEN}`,
@@ -45,8 +52,14 @@ export async function cotarFrete(cfg, cepDestino, quantidade, valorDeclarado) {
       products: [{ quantity: quantidade, weight: cfg.pacotePeso, height: cfg.pacoteAltura, width: cfg.pacoteLargura, length: cfg.pacoteComprimento }],
     }),
   }, 'O cálculo de frete');
-  return (Array.isArray(lista) ? lista : [])
-    .filter(o => !o.has_error && !o.error && Number(o.price) > 0)
+  const lista = Array.isArray(resposta) ? resposta : Array.isArray(resposta?.data) ? resposta.data : [];
+  const validas = lista.filter(o => !o.has_error && !o.error && Number(o.price) > 0);
+  // Sem nenhuma opção, registra o motivo de cada serviço para aparecer nos Logs do Render.
+  if (!validas.length) {
+    const motivos = lista.length ? lista.map(o => `${o.name || o.id}: ${o.error || o.message || 'sem preço'}`).join(' | ') : JSON.stringify(resposta)?.slice(0, 500);
+    console.error(`SuperFrete sem opções (${cfg.cepOrigem} -> ${cepDestino}, seguro ${valorDeclarado}):`, motivos);
+  }
+  return validas
     .map(o => ({
       id: Number(o.id),
       nome: String(o.name || ''),
