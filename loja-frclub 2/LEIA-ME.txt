@@ -1,0 +1,50 @@
+SITE DA FR CLUB (LOJA + PAINEL)
+===============================
+
+O site tem duas partes:
+  - A loja (o que o cliente vê): endereço principal do site.
+  - O painel (só você): endereço do site + /admin   (ex.: frclub.onrender.com/admin)
+    No painel você cadastra peças, sobe fotos, troca a imagem grande do topo (PC e celular),
+    a logo, os textos, o WhatsApp e o Instagram. Nada de código.
+
+COLOCAR NO AR (Render)
+  1) GitHub: crie um repositório novo (ex.: loja-frclub) e suba TUDO desta pasta:
+     server.js, package.json, LEIA-ME.txt e as pastas lib e public.
+  2) Render: "New +" > "Web Service" > escolha o repositório.
+       Language: Node
+       Build Command:  npm install
+       Start Command:  npm start
+       Plano: Starter (o gratuito não guarda as fotos)
+  3) Ainda no Render, em "Disks" (ou "Advanced" > Add Disk):
+       Mount Path:  /data
+       Tamanho: 1 GB
+  4) Em "Environment", crie estas variáveis:
+       ADMIN_SENHA     a senha do painel: no mínimo 12 caracteres, misturando letras,
+                       números e símbolos. Nunca escreva essa senha em arquivo do GitHub.
+       DATA_DIR        /data
+       CONFIAR_PROXY   1
+  5) Clique em "Create Web Service". Quando terminar, abra o endereço do site + /admin,
+     entre com a senha e comece pelo item "Aparência".
+
+DOMÍNIO PRÓPRIO (ex.: frclub.com.br)
+  Compre em registro.br. No Render: Settings > Custom Domains > Add, e siga o passo a passo.
+
+DICAS
+  - Imagem do topo: uma deitada para o computador e uma em pé para o celular.
+    O painel já diminui o tamanho das fotos sozinho antes de enviar.
+  - Logo: PNG com fundo transparente, de preferência branca (o topo é escuro).
+  - Pagamento: se tiver um link de pagamento (Pagar.me ou outro), cole no campo
+    "Link de pagamento" da peça. Aparece o botão "Comprar agora".
+    Sem link, o cliente monta a sacola e finaliza pelo WhatsApp.
+  - Nunca coloque no site a chave secreta do Pagar.me.
+  - Revise as Perguntas frequentes (aba "Contato e textos"): precisam valer para a sua loja.
+
+SEGURANÇA (o que o site já faz sozinho)
+  - Força HTTPS e manda o navegador usar só HTTPS.
+  - Painel com senha; a sessão vale 7 dias; trocar a ADMIN_SENHA no Render desconecta todo mundo.
+  - Bloqueia tentativas de senha em sequência e robôs no login; limita pedidos por pessoa.
+  - Cookies protegidos (só o servidor lê, outro site não consegue usar).
+  - Só aceita fotos JPG, PNG ou WEBP de verdade, até 8 MB cada.
+  - Tudo que é digitado é conferido; o banco nunca recebe comandos montados com texto de fora.
+  - O arquivo .gitignore impede que banco, fotos e senhas sejam enviados ao GitHub.
+  Se um dia você suspeitar que alguém descobriu a senha: troque a ADMIN_SENHA no Render.

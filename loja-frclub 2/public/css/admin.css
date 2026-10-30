@@ -1,0 +1,104 @@
+/* Painel da loja: simples e claro, para usar no computador ou no celular. */
+:root { --preto: #000; --cinza-1: #f5f5f4; --cinza-2: #e3e3e0; --cinza-3: #7a7a76; --vermelho: #b42318; --verde: #146c3f; --f: 'Jost', 'Helvetica Neue', Arial, sans-serif; }
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--cinza-1); color: var(--preto); font: 400 16px/1.5 var(--f); }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: 28px; font-weight: 500; }
+h2 { font-size: 18px; font-weight: 500; }
+h3 { font-size: 15px; font-weight: 500; }
+img { display: block; max-width: 100%; }
+a { color: inherit; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--preto); outline-offset: 2px; }
+.nota { color: var(--cinza-3); font-size: 14px; }
+.erro { color: var(--vermelho); }
+
+.botao { display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 10px 20px; border: 1px solid var(--preto); background: var(--preto); color: #fff; font: 500 14px/1 var(--f); letter-spacing: .08em; text-transform: uppercase; text-decoration: none; cursor: pointer; }
+.botao:disabled { opacity: .5; cursor: wait; }
+.botao-linha { background: #fff; color: var(--preto); }
+.link { padding: 6px 0; background: none; border: 0; font: inherit; font-size: 15px; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.perigo { color: var(--vermelho); }
+
+.campo { display: grid; gap: 6px; }
+.campo > span { font-size: 14px; font-weight: 500; }
+.campo input, .campo textarea, .busca { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--cinza-2); border-radius: 2px; background: #fff; font: inherit; }
+.campo textarea { resize: vertical; }
+.campo input:focus, .campo textarea:focus, .busca:focus { outline: none; border-color: var(--preto); }
+.chave { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; cursor: pointer; }
+.chave input { width: 20px; height: 20px; accent-color: var(--preto); }
+
+/* entrar */
+.entrar { min-height: 100svh; display: grid; place-items: center; padding: 20px; }
+.entrar-caixa { width: min(380px, 100%); display: grid; gap: 18px; justify-items: stretch; padding: 32px; background: #fff; border: 1px solid var(--cinza-2); }
+.entrar-caixa img { justify-self: center; }
+.entrar-caixa h1 { text-align: center; font-size: 22px; }
+.entrar-caixa .link { justify-self: center; }
+
+/* moldura */
+.painel-topo { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 12px clamp(16px, 3vw, 40px); background: #fff; border-bottom: 1px solid var(--cinza-2); }
+.painel-marca { display: inline-flex; align-items: center; gap: 10px; font-weight: 500; text-decoration: none; }
+.abas { display: flex; gap: 6px; flex: 1; }
+.abas button { padding: 10px 14px; background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; color: var(--cinza-3); cursor: pointer; }
+.abas button[aria-current="true"] { color: var(--preto); border-bottom-color: var(--preto); font-weight: 500; }
+.painel-acoes { display: flex; gap: 18px; }
+.painel-corpo { max-width: 1100px; margin: 0 auto; padding: 28px clamp(16px, 3vw, 40px) 80px; }
+.cabeca-aba { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 20px; }
+.busca { margin-bottom: 14px; }
+
+/* lista de peças */
+.lista { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.linha { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto auto; align-items: center; gap: 16px; padding: 10px 14px 10px 10px; background: #fff; border: 1px solid var(--cinza-2); }
+.linha img, .linha .sem-img { width: 72px; height: 90px; object-fit: cover; background: var(--cinza-1); }
+.sem-img { display: grid; place-items: center; font-size: 11px; color: var(--cinza-3); text-align: center; }
+.linha-texto { display: grid; gap: 2px; min-width: 0; }
+.linha-texto b { font-weight: 500; }
+.linha-chaves { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.linha-chaves .chave { font-size: 14px; min-height: 32px; }
+.vazio { padding: 28px; background: #fff; border: 1px dashed var(--cinza-2); text-align: center; }
+
+/* formulário */
+.voltar { margin-bottom: 12px; }
+.bloco { display: grid; gap: 14px; padding: 22px; margin-bottom: 14px; background: #fff; border: 1px solid var(--cinza-2); }
+.grade-campos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.largo { grid-column: 1 / -1; }
+.chaves { display: flex; flex-wrap: wrap; gap: 6px 28px; }
+.rodape-form { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 20px; padding: 14px 0; background: var(--cinza-1); }
+.fotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; }
+.foto-item { position: relative; margin: 0; }
+.foto-item img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; background: var(--cinza-1); }
+.capa { position: absolute; left: 6px; top: 6px; padding: 3px 8px; background: var(--preto); color: #fff; font-size: 12px; }
+.foto-botoes { display: flex; gap: 4px; margin-top: 6px; }
+.foto-botoes button { flex: 1; min-height: 36px; background: #fff; border: 1px solid var(--cinza-2); cursor: pointer; font-size: 15px; }
+.foto-botoes button:disabled { opacity: .35; cursor: default; }
+.subir { justify-self: start; cursor: pointer; }
+
+/* aparência */
+.imagens-topo { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; }
+.quadro-imagem { display: grid; gap: 8px; align-content: start; }
+.previa { display: grid; place-items: center; background: var(--cinza-1); border: 1px solid var(--cinza-2); overflow: hidden; }
+.previa.escura { background: #111; padding: 20px; }
+.previa-heroDesktop img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.previa-heroMobile img { width: 100%; aspect-ratio: 9 / 14; object-fit: cover; }
+.previa-logo img { max-width: 180px; max-height: 180px; object-fit: contain; }
+.linha-botoes { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.linha-botoes .botao { cursor: pointer; }
+.faq-editor { display: grid; gap: 14px; }
+.faq-linha { display: grid; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--cinza-2); }
+.faq-linha .link { justify-self: start; }
+
+.aviso { position: fixed; left: 50%; bottom: 24px; z-index: 50; transform: translateX(-50%); padding: 12px 20px; background: var(--preto); color: #fff; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
+.aviso-erro { background: var(--vermelho); }
+
+@media (max-width: 720px) {
+  .painel-topo { gap: 8px 16px; }
+  .abas { order: 3; flex-basis: 100%; overflow-x: auto; }
+  .painel-acoes { margin-left: auto; }
+  .linha { grid-template-columns: 60px minmax(0, 1fr); }
+  .linha img, .linha .sem-img { width: 60px; height: 75px; }
+  .linha-chaves, .linha .botao { grid-column: 1 / -1; }
+  .grade-campos, .imagens-topo { grid-template-columns: 1fr; }
+  .fotos { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* campo invisível que só robôs preenchem */
+.isca { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }

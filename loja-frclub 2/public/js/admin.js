@@ -1,0 +1,457 @@
+// Painel da loja: peças, fotos, imagens do topo e textos. Tudo sem mexer em código.
+const raiz = document.getElementById('painel');
+const esc = t => String(t ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const reais = n => (typeof n === 'number' ? n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—');
+const foto = a => `/fotos/${encodeURIComponent(a)}`;
+const paraCampo = n => (n == null ? '' : String(n).replace('.', ','));
+function lerValor(t) {
+  const s = String(t ?? '').trim().replace(/^R\$\s*/i, '');
+  if (!s) return null;
+  const n = Number(s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+async function api(metodo, caminho, corpo) {
+  let r;
+  try {
+    r = await fetch(`/api${caminho}`, { method: metodo, headers: corpo === undefined ? {} : { 'Content-Type': 'application/json' }, body: corpo === undefined ? undefined : JSON.stringify(corpo) });
+  } catch {
+    throw new Error('Sem conexão. Confira a internet e tente de novo.');
+  }
+  const dados = await r.json().catch(() => null);
+  if (r.status === 401 && caminho !== '/entrar') { telaEntrar(); throw new Error('Sua sessão terminou. Entre de novo.'); }
+  if (!r.ok) throw new Error(dados?.erro || 'Algo deu errado. Tente de novo.');
+  return dados;
+}
+
+function avisar(texto, tipo = 'ok') {
+  const el = document.createElement('div');
+  el.className = `aviso aviso-${tipo}`;
+  el.setAttribute('role', tipo === 'erro' ? 'alert' : 'status');
+  el.textContent = texto;
+  document.body.append(el);
+  setTimeout(() => el.remove(), 3800);
+}
+
+// Diminui a foto no próprio aparelho antes de enviar (abre mais rápido no site e gasta menos espaço).
+async function reduzir(arquivo, maximo, manterPng = false) {
+  let imagem;
+  try {
+    imagem = await createImageBitmap(arquivo);
+  } catch {
+    throw new Error(`Não consegui abrir "${arquivo.name}". Use foto JPG, PNG ou WEBP.`);
+  }
+  const escala = Math.min(1, maximo / Math.max(imagem.width, imagem.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(imagem.width * escala);
+  canvas.height = Math.round(imagem.height * escala);
+  const ctx = canvas.getContext('2d');
+  const png = manterPng && arquivo.type === 'image/png';
+  if (!png) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  ctx.drawImage(imagem, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL(png ? 'image/png' : 'image/jpeg', 0.86);
+}
+
+// ---------- entrar ----------
+async function iniciar() {
+  let sessao;
+  try {
+    sessao = await api('GET', '/sessao');
+  } catch (e) {
+    raiz.innerHTML = `<main class="entrar"><p>${esc(e.message)}</p></main>`;
+    return;
+  }
+  if (!sessao.painelLigado) {
+    raiz.innerHTML = `<main class="entrar"><div class="entrar-caixa"><img src="/static/img/logo-cor.png" alt="" width="72" height="72"><h1>Painel desligado</h1>
+      <p>${esc(sessao.motivo || 'Crie no Render a variável ADMIN_SENHA com a senha do painel.')}</p></div></main>`;
+    return;
+  }
+  if (!sessao.logado) return telaEntrar();
+  telaPainel('pecas');
+}
+
+function telaEntrar() {
+  raiz.innerHTML = `
+  <main class="entrar">
+    <form class="entrar-caixa" novalidate>
+      <img src="/static/img/logo-cor.png" alt="" width="72" height="72">
+      <h1>Painel da loja</h1>
+      <label class="campo"><span>Senha</span><input type="password" name="senha" autocomplete="current-password" required></label>
+      <label class="isca" aria-hidden="true">Site <input name="site" tabindex="-1" autocomplete="off"></label>
+      <p class="erro" role="alert" hidden></p>
+      <button class="botao" type="submit">Entrar</button>
+      <a class="link" href="/">Voltar para o site</a>
+    </form>
+  </main>`;
+  const form = raiz.querySelector('form');
+  form.senha.focus();
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const erro = form.querySelector('.erro');
+    erro.hidden = true;
+    try {
+      await api('POST', '/entrar', { senha: form.senha.value, site: form.site.value });
+      telaPainel('pecas');
+    } catch (falha) {
+      erro.textContent = falha.message;
+      erro.hidden = false;
+      form.senha.select();
+    }
+  });
+}
+
+// ---------- moldura do painel ----------
+const ABAS = [['pecas', 'Peças'], ['aparencia', 'Aparência'], ['textos', 'Contato e textos']];
+function telaPainel(aba) {
+  raiz.innerHTML = `
+  <header class="painel-topo">
+    <a class="painel-marca" href="/admin"><img src="/static/img/logo-cor.png" alt="" width="36" height="36"><span>Painel da loja</span></a>
+    <nav class="abas" aria-label="Seções do painel">
+      ${ABAS.map(([id, nome]) => `<button type="button" data-aba="${id}" aria-current="${id === aba}">${nome}</button>`).join('')}
+    </nav>
+    <div class="painel-acoes">
+      <a class="link" href="/" target="_blank" rel="noopener">Ver o site</a>
+      <button class="link" type="button" data-sair>Sair</button>
+    </div>
+  </header>
+  <main class="painel-corpo" data-corpo></main>`;
+  raiz.querySelectorAll('[data-aba]').forEach(b => b.addEventListener('click', () => telaPainel(b.dataset.aba)));
+  raiz.querySelector('[data-sair]').addEventListener('click', async () => { await api('POST', '/sair').catch(() => {}); telaEntrar(); });
+  const corpo = raiz.querySelector('[data-corpo]');
+  if (aba === 'pecas') abaPecas(corpo);
+  else abaConfig(corpo, aba);
+}
+
+// ---------- peças ----------
+let pecas = [];
+async function abaPecas(corpo) {
+  corpo.innerHTML = '<p class="nota">Carregando…</p>';
+  try {
+    pecas = await api('GET', '/admin/pecas');
+  } catch (e) {
+    corpo.innerHTML = `<p class="erro">${esc(e.message)}</p>`;
+    return;
+  }
+  let busca = '';
+  corpo.innerHTML = `
+    <div class="cabeca-aba">
+      <div><h1>Peças</h1><p class="nota">${pecas.length} cadastradas · ${pecas.filter(p => p.visivel && !p.esgotado).length} à venda no site</p></div>
+      <button class="botao" type="button" data-nova>+ Nova peça</button>
+    </div>
+    <input class="busca" type="search" placeholder="Buscar por nome, marca ou categoria" aria-label="Buscar peça" data-busca>
+    <ul class="lista" data-lista></ul>`;
+  const lista = corpo.querySelector('[data-lista]');
+  const desenhar = () => {
+    const termo = busca.toLowerCase();
+    const visiveis = pecas.filter(p => !termo || `${p.nome} ${p.marca} ${p.categoria}`.toLowerCase().includes(termo));
+    lista.innerHTML = visiveis.length ? visiveis.map(p => `
+      <li class="linha" data-id="${p.id}">
+        ${p.fotos[0] ? `<img src="${foto(p.fotos[0])}" alt="" loading="lazy">` : '<span class="sem-img">Sem foto</span>'}
+        <div class="linha-texto">
+          <b>${esc(p.nome)}</b>
+          <span class="nota">${esc([p.marca, p.categoria, p.tamanhos.join(', ')].filter(Boolean).join(' · '))}</span>
+          <span>${reais(p.preco)}</span>
+        </div>
+        <div class="linha-chaves">
+          <label class="chave"><input type="checkbox" data-rapido="visivel" ${p.visivel ? 'checked' : ''}><span>No site</span></label>
+          <label class="chave"><input type="checkbox" data-rapido="esgotado" ${p.esgotado ? 'checked' : ''}><span>Esgotado</span></label>
+          <label class="chave"><input type="checkbox" data-rapido="destaque" ${p.destaque ? 'checked' : ''}><span>Destaque</span></label>
+        </div>
+        <button class="botao botao-linha" type="button" data-editar>Editar</button>
+      </li>`).join('') : `<li class="nota vazio">${pecas.length ? 'Nenhuma peça com essa busca.' : 'Nenhuma peça ainda. Clique em "Nova peça" para cadastrar a primeira.'}</li>`;
+  };
+  desenhar();
+  corpo.querySelector('[data-busca]').addEventListener('input', e => { busca = e.target.value; desenhar(); });
+  corpo.querySelector('[data-nova]').addEventListener('click', () => formPeca(corpo, null));
+  lista.addEventListener('click', e => {
+    if (!e.target.closest('[data-editar]')) return;
+    const id = Number(e.target.closest('[data-id]').dataset.id);
+    formPeca(corpo, pecas.find(p => p.id === id));
+  });
+  lista.addEventListener('change', async e => {
+    const caixa = e.target.closest('[data-rapido]');
+    if (!caixa) return;
+    const id = Number(caixa.closest('[data-id]').dataset.id);
+    try {
+      const nova = await api('PATCH', `/admin/pecas/${id}`, { [caixa.dataset.rapido]: caixa.checked });
+      pecas = pecas.map(p => (p.id === id ? nova : p));
+      avisar('Salvo.');
+    } catch (falha) {
+      caixa.checked = !caixa.checked;
+      avisar(falha.message, 'erro');
+    }
+  });
+}
+
+function formPeca(corpo, p) {
+  const nova = !p;
+  p = p ?? { nome: '', marca: '', categoria: '', descricao: '', estado: '', tamanhos: [], preco: null, preco_antigo: null, link_pagamento: '', fotos: [], visivel: true, esgotado: false, destaque: false, peca_unica: false };
+  let fotos = p.fotos.map(arquivo => ({ arquivo, src: foto(arquivo) }));
+  const sugestoes = campo => [...new Set(pecas.map(x => x[campo]).filter(Boolean))].map(v => `<option value="${esc(v)}">`).join('');
+  corpo.innerHTML = `
+    <button class="link voltar" type="button" data-voltar>← Voltar para as peças</button>
+    <form class="form-peca" novalidate>
+      <div class="cabeca-aba"><h1>${nova ? 'Nova peça' : 'Editar peça'}</h1></div>
+      <section class="bloco">
+        <h2>Fotos</h2>
+        <p class="nota">Até 8 fotos. A primeira é a capa. Foto vertical fica melhor (proporção 4 por 5).</p>
+        <div class="fotos" data-fotos></div>
+        <label class="botao botao-linha subir">+ Adicionar fotos<input type="file" accept="image/*" multiple data-subir hidden></label>
+      </section>
+      <section class="bloco grade-campos">
+        <label class="campo largo"><span>Nome da peça *</span><input name="nome" maxlength="120" value="${esc(p.nome)}" placeholder="Ex.: Camiseta oversized"></label>
+        <label class="campo"><span>Marca</span><input name="marca" maxlength="60" list="lista-marcas" value="${esc(p.marca)}" placeholder="Ex.: All Saints"><datalist id="lista-marcas">${sugestoes('marca')}</datalist></label>
+        <label class="campo"><span>Categoria (aparece no menu)</span><input name="categoria" maxlength="40" list="lista-categorias" value="${esc(p.categoria)}" placeholder="Ex.: Camisetas"><datalist id="lista-categorias">${sugestoes('categoria')}</datalist></label>
+        <label class="campo"><span>Preço (R$)</span><input name="preco" inputmode="decimal" value="${esc(paraCampo(p.preco))}" placeholder="0,00"></label>
+        <label class="campo"><span>Preço antigo, riscado (opcional)</span><input name="preco_antigo" inputmode="decimal" value="${esc(paraCampo(p.preco_antigo))}" placeholder="0,00"></label>
+        <label class="campo"><span>Tamanhos (separe com vírgula)</span><input name="tamanhos" value="${esc(p.tamanhos.join(', '))}" placeholder="Ex.: P, M, G ou 40, 41, 42"></label>
+        <label class="campo"><span>Estado (opcional)</span><input name="estado" maxlength="60" value="${esc(p.estado)}" placeholder="Ex.: Novo com etiqueta, 9/10"></label>
+        <label class="campo largo"><span>Descrição</span><textarea name="descricao" rows="5" maxlength="4000" placeholder="Material, medidas, detalhes">${esc(p.descricao)}</textarea></label>
+        <label class="campo largo"><span>Link de pagamento (Pagar.me ou outro, opcional)</span><input name="link_pagamento" maxlength="500" value="${esc(p.link_pagamento)}" placeholder="https://..."><small class="nota">Com link, aparece o botão "Comprar agora" na página da peça.</small></label>
+      </section>
+      <section class="bloco chaves">
+        <label class="chave"><input type="checkbox" name="visivel" ${p.visivel ? 'checked' : ''}><span>Mostrar no site</span></label>
+        <label class="chave"><input type="checkbox" name="esgotado" ${p.esgotado ? 'checked' : ''}><span>Esgotado</span></label>
+        <label class="chave"><input type="checkbox" name="destaque" ${p.destaque ? 'checked' : ''}><span>Destaque na página inicial</span></label>
+        <label class="chave"><input type="checkbox" name="peca_unica" ${p.peca_unica ? 'checked' : ''}><span>Peça única</span></label>
+      </section>
+      <p class="erro" role="alert" hidden></p>
+      <div class="rodape-form">
+        <button class="botao" type="submit">${nova ? 'Cadastrar peça' : 'Salvar alterações'}</button>
+        ${nova ? '' : `<a class="link" href="/peca/${esc(p.slug)}" target="_blank" rel="noopener">Ver no site</a><button class="link perigo" type="button" data-excluir>Excluir peça</button>`}
+      </div>
+    </form>`;
+  window.scrollTo(0, 0);
+  const form = corpo.querySelector('form');
+  const caixaFotos = corpo.querySelector('[data-fotos]');
+  const erro = form.querySelector('.erro');
+
+  const desenharFotos = () => {
+    caixaFotos.innerHTML = fotos.length ? fotos.map((f, i) => `
+      <figure class="foto-item">
+        <img src="${esc(f.src)}" alt="Foto ${i + 1}">
+        ${i === 0 ? '<span class="capa">Capa</span>' : ''}
+        <div class="foto-botoes">
+          <button type="button" data-mover="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Mover para a esquerda">←</button>
+          <button type="button" data-mover="${i}" data-dir="1" ${i === fotos.length - 1 ? 'disabled' : ''} aria-label="Mover para a direita">→</button>
+          <button type="button" data-tirar="${i}" aria-label="Tirar foto">✕</button>
+        </div>
+      </figure>`).join('') : '<p class="nota">Nenhuma foto ainda.</p>';
+  };
+  desenharFotos();
+  caixaFotos.addEventListener('click', e => {
+    const mover = e.target.closest('[data-mover]');
+    const tirar = e.target.closest('[data-tirar]');
+    if (mover) {
+      const i = Number(mover.dataset.mover);
+      const j = i + Number(mover.dataset.dir);
+      [fotos[i], fotos[j]] = [fotos[j], fotos[i]];
+    } else if (tirar) fotos.splice(Number(tirar.dataset.tirar), 1);
+    else return;
+    desenharFotos();
+  });
+  corpo.querySelector('[data-subir]').addEventListener('change', async e => {
+    const arquivos = [...e.target.files].slice(0, 8 - fotos.length);
+    e.target.value = '';
+    if (!arquivos.length) return avisar('Já tem 8 fotos. Tire uma para colocar outra.', 'erro');
+    for (const a of arquivos) {
+      try {
+        const dados = await reduzir(a, 1600);
+        fotos.push({ dados, src: dados });
+      } catch (falha) {
+        avisar(falha.message, 'erro');
+      }
+    }
+    desenharFotos();
+  });
+  corpo.querySelector('[data-voltar]').addEventListener('click', () => abaPecas(corpo));
+  corpo.querySelector('[data-excluir]')?.addEventListener('click', async () => {
+    if (!confirm(`Excluir "${p.nome}"? As fotos também são apagadas. Não dá para desfazer.`)) return;
+    try {
+      await api('DELETE', `/admin/pecas/${p.id}`);
+      avisar('Peça excluída.');
+      abaPecas(corpo);
+    } catch (falha) {
+      avisar(falha.message, 'erro');
+    }
+  });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    erro.hidden = true;
+    const mostrar = (texto, campo) => { erro.textContent = texto; erro.hidden = false; campo?.focus(); };
+    const preco = lerValor(form.preco.value);
+    const precoAntigo = lerValor(form.preco_antigo.value);
+    if (!form.nome.value.trim()) return mostrar('Digite o nome da peça.', form.nome);
+    if (Number.isNaN(preco)) return mostrar('Preço inválido. Ex.: 189,90', form.preco);
+    if (Number.isNaN(precoAntigo)) return mostrar('Preço antigo inválido. Ex.: 249,90', form.preco_antigo);
+    const corpoPedido = {
+      nome: form.nome.value, marca: form.marca.value, categoria: form.categoria.value, descricao: form.descricao.value,
+      estado: form.estado.value, tamanhos: form.tamanhos.value.split(',').map(t => t.trim()).filter(Boolean),
+      preco, preco_antigo: precoAntigo, link_pagamento: form.link_pagamento.value.trim(),
+      visivel: form.visivel.checked, esgotado: form.esgotado.checked, destaque: form.destaque.checked, peca_unica: form.peca_unica.checked,
+      fotos: fotos.map(f => (f.arquivo ? { arquivo: f.arquivo } : { dados: f.dados })),
+    };
+    const botao = form.querySelector('button[type="submit"]');
+    botao.disabled = true;
+    botao.textContent = 'Salvando…';
+    try {
+      await api(nova ? 'POST' : 'PATCH', nova ? '/admin/pecas' : `/admin/pecas/${p.id}`, corpoPedido);
+      avisar(nova ? 'Peça cadastrada.' : 'Alterações salvas.');
+      abaPecas(corpo);
+    } catch (falha) {
+      mostrar(falha.message);
+      botao.disabled = false;
+      botao.textContent = nova ? 'Cadastrar peça' : 'Salvar alterações';
+    }
+  });
+}
+
+// ---------- aparência, contato e textos ----------
+async function abaConfig(corpo, aba) {
+  corpo.innerHTML = '<p class="nota">Carregando…</p>';
+  let cfg;
+  try {
+    cfg = await api('GET', '/admin/aparencia');
+  } catch (e) {
+    corpo.innerHTML = `<p class="erro">${esc(e.message)}</p>`;
+    return;
+  }
+  const imagens = {}; // trocas pendentes: { dados } ou null (voltar à padrão)
+  const quadroImagem = (chave, titulo, dica, padrao, escuro) => `
+    <div class="quadro-imagem" data-imagem="${chave}">
+      <h3>${titulo}</h3>
+      <p class="nota">${dica}</p>
+      <div class="previa ${escuro ? 'escura' : ''} previa-${chave}"><img alt="" data-previa src="${esc(cfg[chave] ? foto(cfg[chave]) : padrao)}"></div>
+      <div class="linha-botoes">
+        <label class="botao botao-linha">Trocar imagem<input type="file" accept="image/*" hidden data-arquivo></label>
+        <button class="link" type="button" data-padrao>Voltar à padrão</button>
+      </div>
+    </div>`;
+
+  if (aba === 'aparencia') {
+    corpo.innerHTML = `
+    <form class="form-config" novalidate>
+      <div class="cabeca-aba"><h1>Aparência</h1></div>
+      <section class="bloco">
+        <h2>Imagem grande do topo</h2>
+        <p class="nota">É a primeira coisa que aparece no site. Use uma imagem deitada para o computador e uma em pé para o celular.</p>
+        <div class="imagens-topo">
+          ${quadroImagem('heroDesktop', 'Computador', 'Deitada, de preferência 1920 × 1080 ou maior.', '/static/img/hero-padrao-pc.jpg')}
+          ${quadroImagem('heroMobile', 'Celular', 'Em pé, de preferência 1080 × 1600. Sem ela, o celular usa a do computador.', '/static/img/hero-padrao-celular.jpg')}
+        </div>
+        <label class="chave"><input type="checkbox" name="heroPretoBranco" ${cfg.heroPretoBranco ? 'checked' : ''}><span>Deixar a imagem em preto e branco</span></label>
+        <label class="chave"><input type="checkbox" name="mostrarLogoHero" ${cfg.mostrarLogoHero ? 'checked' : ''}><span>Mostrar a logo no centro da imagem</span></label>
+        <label class="campo"><span>Frase embaixo da logo (letra de mão)</span><input name="fraseHero" maxlength="80" value="${esc(cfg.fraseHero)}" placeholder="Deixe vazio para não mostrar"></label>
+      </section>
+      <section class="bloco">
+        <h2>Logo</h2>
+        ${quadroImagem('logo', 'Logo do site', 'Use PNG com fundo transparente, de preferência branca (o topo do site é escuro).', '/static/img/logo-branca.png', true)}
+      </section>
+      <section class="bloco grade-campos">
+        <h2 class="largo">Barra fina do topo</h2>
+        <label class="campo largo"><span>Frase do meio</span><input name="barraTopo" maxlength="120" value="${esc(cfg.barraTopo)}"></label>
+        <label class="campo"><span>Texto do link da direita</span><input name="linkTopoTexto" maxlength="40" value="${esc(cfg.linkTopoTexto)}"></label>
+        <label class="campo"><span>Link (vazio = abre o WhatsApp)</span><input name="linkTopoUrl" maxlength="300" value="${esc(cfg.linkTopoUrl)}" placeholder="https://..."></label>
+        <label class="campo largo"><span>Título da vitrine na página inicial</span><input name="tituloPecas" maxlength="60" value="${esc(cfg.tituloPecas)}"></label>
+      </section>
+      <p class="erro" role="alert" hidden></p>
+      <div class="rodape-form"><button class="botao" type="submit">Salvar aparência</button></div>
+    </form>`;
+  } else {
+    corpo.innerHTML = `
+    <form class="form-config" novalidate>
+      <div class="cabeca-aba"><h1>Contato e textos</h1></div>
+      <section class="bloco grade-campos">
+        <h2 class="largo">Contato</h2>
+        <label class="campo"><span>Nome da loja</span><input name="nomeLoja" maxlength="40" value="${esc(cfg.nomeLoja)}"></label>
+        <label class="campo"><span>WhatsApp (55 + DDD + número)</span><input name="whatsapp" inputmode="numeric" value="${esc(cfg.whatsapp)}" placeholder="5571999998888"></label>
+        <label class="campo largo"><span>Mensagem que já vem escrita no WhatsApp</span><input name="mensagemWhatsapp" maxlength="300" value="${esc(cfg.mensagemWhatsapp)}"></label>
+        <label class="campo"><span>Instagram (sem @)</span><input name="instagram" value="${esc(cfg.instagram)}" placeholder="frclub"></label>
+        <label class="campo"><span>E-mail</span><input name="email" type="email" value="${esc(cfg.email)}"></label>
+        <label class="campo"><span>Cidade</span><input name="cidade" value="${esc(cfg.cidade)}" placeholder="Salvador, BA"></label>
+        <label class="campo"><span>CNPJ (aparece no rodapé)</span><input name="cnpj" value="${esc(cfg.cnpj)}"></label>
+      </section>
+      <section class="bloco grade-campos">
+        <h2 class="largo">Sobre a loja</h2>
+        <label class="campo largo"><span>Título</span><input name="sobreTitulo" maxlength="80" value="${esc(cfg.sobreTitulo)}"></label>
+        <label class="campo largo"><span>Texto (pule linha para separar parágrafos)</span><textarea name="sobreTexto" rows="6" maxlength="4000">${esc(cfg.sobreTexto)}</textarea></label>
+      </section>
+      <section class="bloco grade-campos">
+        <h2 class="largo">Faixa de destaques (até 4 frases curtas)</h2>
+        ${[0, 1, 2, 3].map(i => `<label class="campo"><span>Frase ${i + 1}</span><input name="selo" maxlength="80" value="${esc(cfg.selos?.[i] ?? '')}"></label>`).join('')}
+      </section>
+      <section class="bloco">
+        <h2>Perguntas frequentes</h2>
+        <p class="nota">Revise as respostas: elas precisam valer para a sua loja.</p>
+        <div class="faq-editor" data-faq></div>
+        <button class="link" type="button" data-mais-faq>+ Adicionar pergunta</button>
+      </section>
+      <p class="erro" role="alert" hidden></p>
+      <div class="rodape-form"><button class="botao" type="submit">Salvar</button></div>
+    </form>`;
+    const caixa = corpo.querySelector('[data-faq]');
+    const linhaFaq = (f = { p: '', r: '' }) => `
+      <div class="faq-linha">
+        <label class="campo"><span>Pergunta</span><input data-p maxlength="200" value="${esc(f.p)}"></label>
+        <label class="campo"><span>Resposta</span><textarea data-r rows="3" maxlength="1500">${esc(f.r)}</textarea></label>
+        <button class="link perigo" type="button" data-tirar-faq>Tirar</button>
+      </div>`;
+    caixa.innerHTML = (cfg.faq ?? []).map(linhaFaq).join('');
+    corpo.querySelector('[data-mais-faq]').addEventListener('click', () => caixa.insertAdjacentHTML('beforeend', linhaFaq()));
+    caixa.addEventListener('click', e => e.target.closest('[data-tirar-faq]')?.closest('.faq-linha').remove());
+  }
+
+  const form = corpo.querySelector('form');
+  const erro = form.querySelector('.erro');
+  // Troca de imagens (com pré-visualização).
+  form.querySelectorAll('[data-imagem]').forEach(q => {
+    const chave = q.dataset.imagem;
+    const previa = q.querySelector('[data-previa]');
+    const maximo = chave === 'logo' ? 800 : chave === 'heroMobile' ? 1600 : 2400;
+    q.querySelector('[data-arquivo]').addEventListener('change', async e => {
+      const arquivo = e.target.files[0];
+      e.target.value = '';
+      if (!arquivo) return;
+      try {
+        const dados = await reduzir(arquivo, maximo, chave === 'logo');
+        imagens[chave] = { dados };
+        previa.src = dados;
+        avisar('Imagem pronta. Clique em Salvar para publicar.');
+      } catch (falha) {
+        avisar(falha.message, 'erro');
+      }
+    });
+    q.querySelector('[data-padrao]').addEventListener('click', () => {
+      imagens[chave] = null;
+      previa.src = { heroDesktop: '/static/img/hero-padrao-pc.jpg', heroMobile: '/static/img/hero-padrao-celular.jpg', logo: '/static/img/logo-branca.png' }[chave];
+    });
+  });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    erro.hidden = true;
+    const dados = { ...imagens };
+    for (const el of form.querySelectorAll('input[name], textarea[name]')) {
+      if (el.name === 'selo' || el.type === 'file') continue;
+      dados[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+    }
+    if (aba === 'textos') {
+      dados.selos = [...form.querySelectorAll('[name="selo"]')].map(i => i.value.trim()).filter(Boolean);
+      dados.faq = [...form.querySelectorAll('.faq-linha')].map(l => ({ p: l.querySelector('[data-p]').value.trim(), r: l.querySelector('[data-r]').value.trim() })).filter(f => f.p && f.r);
+    }
+    const botao = form.querySelector('button[type="submit"]');
+    botao.disabled = true;
+    try {
+      await api('PATCH', '/admin/aparencia', dados);
+      avisar('Salvo. Já está no site.');
+      abaConfig(corpo, aba);
+    } catch (falha) {
+      erro.textContent = falha.message;
+      erro.hidden = false;
+      botao.disabled = false;
+    }
+  });
+}
+
+iniciar();

@@ -1,0 +1,342 @@
+// Páginas públicas da loja, montadas no servidor (abrem rápido e aparecem bem no Google e no WhatsApp).
+
+const ENT = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ENT[c]);
+const reais = n => (typeof n === 'number' ? n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '');
+const foto = arquivo => `/fotos/${encodeURIComponent(arquivo)}`;
+export const normalizar = t => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+const svg = (corpo, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${corpo}</svg>`;
+export const ICONE = {
+  instagram: svg('<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".6" fill="currentColor"/>'),
+  whatsapp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.04 2a9.9 9.9 0 0 0-8.5 15l-1.5 5 5.2-1.4A9.9 9.9 0 1 0 12.04 2Zm0 18.1a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3.1.8.8-3-.2-.3a8.2 8.2 0 1 1 7 3.8Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4a.5.5 0 0 0 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.1 5.1 0 0 0 1.1 2.7 11.6 11.6 0 0 0 4.4 3.9c1.6.7 2.3.8 3.1.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .1-1.2c0-.2-.2-.2-.5-.4Z"/></svg>',
+  coracao: svg('<path d="M12 20s-7.5-4.6-9.2-9.3C1.6 7.3 3.8 4 7.2 4c2 0 3.6 1.2 4.8 3 1.2-1.8 2.8-3 4.8-3 3.4 0 5.6 3.3 4.4 6.7C19.5 15.4 12 20 12 20Z"/>'),
+  usuario: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.3-4 4.4-6 8-6s6.7 2 8 6"/>'),
+  sacola: svg('<path d="M5 8h14l-1 13H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>'),
+  seta: svg('<path d="m6 9 6 6 6-6"/>'),
+  menu: svg('<path d="M3 7h18M3 12h18M3 17h18"/>'),
+  fechar: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
+  voltar: svg('<path d="m15 18-6-6 6-6"/>'),
+};
+
+function linkWhats(cfg, texto) {
+  if (!cfg.whatsapp) return '#contato';
+  return `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(texto ?? cfg.mensagemWhatsapp)}`;
+}
+
+const unicos = lista => [...new Set(lista.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+// ---------- moldura comum (barra do topo, cabeçalho, sacola, rodapé, WhatsApp) ----------
+function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, imagemOg }) {
+  const logo = cfg.logo ? foto(cfg.logo) : '/static/img/logo-branca.png';
+  const categorias = unicos(produtos.map(p => p.categoria));
+  const marcas = unicos(produtos.map(p => p.marca));
+  const redes = [
+    cfg.instagram && `<a href="https://instagram.com/${esc(cfg.instagram)}" target="_blank" rel="noopener" aria-label="Instagram">${ICONE.instagram}</a>`,
+    cfg.whatsapp && `<a href="${esc(linkWhats(cfg))}" target="_blank" rel="noopener" aria-label="WhatsApp">${ICONE.whatsapp}</a>`,
+  ].filter(Boolean).join('');
+  const linkTopo = cfg.linkTopoUrl || linkWhats(cfg);
+  const submenu = (nome, itens, param) => itens.length ? `
+      <li class="menu-item tem-sub">
+        <a href="/pecas">${esc(nome)}${ICONE.seta}</a>
+        <ul class="submenu">
+          <li><a href="/pecas">Ver tudo</a></li>
+          ${itens.map(i => `<li><a href="/pecas?${param}=${encodeURIComponent(i)}">${esc(i)}</a></li>`).join('')}
+        </ul>
+      </li>` : '';
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(titulo ? `${titulo} | ${cfg.nomeLoja}` : cfg.nomeLoja)}</title>
+  <meta name="description" content="${esc(descricao || cfg.barraTopo)}">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="${esc(titulo || cfg.nomeLoja)}">
+  <meta property="og:description" content="${esc(descricao || cfg.barraTopo)}">
+  ${imagemOg ? `<meta property="og:image" content="${esc(imagemOg)}">` : ''}
+  <link rel="icon" href="/static/img/logo-cor.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&family=Caveat:wght@500&display=swap">
+  <link rel="stylesheet" href="/static/css/loja.css">
+</head>
+<body class="${sobreFoto ? 'com-hero' : ''}">
+  <a class="pular" href="#conteudo">Pular para o conteúdo</a>
+  <div class="barra-topo">
+    <div class="barra-redes">${redes}${redes ? '<span class="barra-traco" aria-hidden="true"></span>' : ''}</div>
+    <p class="barra-texto">${esc(cfg.barraTopo)}</p>
+    <a class="barra-link" href="${esc(linkTopo)}" ${linkTopo.startsWith('http') ? 'target="_blank" rel="noopener"' : ''}>${esc(cfg.linkTopoTexto)}</a>
+  </div>
+
+  <header class="cabecalho">
+    <button class="icone so-celular" type="button" data-abrir-menu aria-label="Abrir menu" aria-expanded="false" aria-controls="menu">${ICONE.menu}</button>
+    <a class="logo" href="/" aria-label="${esc(cfg.nomeLoja)}, início"><img src="${esc(logo)}" alt="${esc(cfg.nomeLoja)}" width="96" height="96"></a>
+    <nav class="menu" id="menu" aria-label="Principal">
+      <button class="icone so-celular menu-fechar" type="button" data-fechar-menu aria-label="Fechar menu">${ICONE.fechar}</button>
+      <ul>
+        ${submenu('Peças', categorias, 'categoria') || '<li class="menu-item"><a href="/pecas">Peças</a></li>'}
+        ${submenu('Marcas', marcas, 'marca')}
+        <li class="menu-item"><a href="/pecas?ordem=novidades">Novidades</a></li>
+        <li class="menu-item"><a href="/#sobre">Sobre a ${esc(cfg.nomeLoja)}</a></li>
+      </ul>
+    </nav>
+    <div class="acoes">
+      <a class="icone" href="/favoritos" aria-label="Favoritos">${ICONE.coracao}<span class="contador" data-contador-favoritos hidden></span></a>
+      <a class="icone so-pc" href="/admin" aria-label="Área do lojista">${ICONE.usuario}</a>
+      <button class="icone" type="button" data-abrir-sacola aria-label="Sacola">${ICONE.sacola}<span class="contador" data-contador-sacola hidden></span></button>
+    </div>
+  </header>
+
+  <main id="conteudo">${corpo}</main>
+
+  <footer class="rodape" id="contato">
+    <div class="rodape-colunas">
+      <div>
+        <img class="rodape-logo" src="${esc(logo)}" alt="${esc(cfg.nomeLoja)}" width="72" height="72">
+        <div class="rodape-redes">${redes}</div>
+      </div>
+      <div>
+        <h2>Loja</h2>
+        <ul>
+          <li><a href="/pecas">Todas as peças</a></li>
+          <li><a href="/pecas?ordem=novidades">Novidades</a></li>
+          <li><a href="/#sobre">Sobre</a></li>
+          <li><a href="/#duvidas">Dúvidas</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Atendimento</h2>
+        <ul>
+          ${cfg.whatsapp ? `<li><a href="${esc(linkWhats(cfg))}" target="_blank" rel="noopener">WhatsApp</a></li>` : ''}
+          ${cfg.email ? `<li><a href="mailto:${esc(cfg.email)}">${esc(cfg.email)}</a></li>` : ''}
+          ${cfg.cidade ? `<li>${esc(cfg.cidade)}</li>` : ''}
+        </ul>
+      </div>
+    </div>
+    <p class="rodape-legal">© ${new Date().getFullYear()} ${esc(cfg.nomeLoja)}${cfg.cnpj ? ` · CNPJ ${esc(cfg.cnpj)}` : ''}</p>
+  </footer>
+
+  <div class="sacola" data-sacola hidden>
+    <div class="sacola-fundo" data-fechar-sacola></div>
+    <aside class="sacola-painel" role="dialog" aria-modal="true" aria-labelledby="sacola-titulo">
+      <div class="sacola-cabeca">
+        <h2 id="sacola-titulo">Sua sacola</h2>
+        <button class="icone" type="button" data-fechar-sacola aria-label="Fechar sacola">${ICONE.fechar}</button>
+      </div>
+      <div class="sacola-itens" data-sacola-itens></div>
+      <div class="sacola-pe" data-sacola-pe></div>
+    </aside>
+  </div>
+
+  ${cfg.whatsapp ? `<a class="whats-flutuante" href="${esc(linkWhats(cfg))}" target="_blank" rel="noopener" aria-label="Falar no WhatsApp">${ICONE.whatsapp}</a>` : ''}
+  <div id="loja-dados" hidden data-whatsapp="${esc(cfg.whatsapp)}" data-loja="${esc(cfg.nomeLoja)}"></div>
+  <script src="/static/js/loja.js" defer></script>
+</body>
+</html>`;
+}
+
+// ---------- cartão de peça ----------
+export function cartao(p) {
+  const capa = p.fotos[0];
+  const segunda = p.fotos[1];
+  return `
+  <article class="peca ${p.esgotado ? 'esgotada' : ''}">
+    <a class="peca-foto" href="/peca/${esc(p.slug)}">
+      ${capa ? `<img src="${foto(capa)}" alt="${esc(`${p.marca} ${p.nome}`)}" loading="lazy" width="800" height="1000">` : '<span class="sem-foto">Sem foto</span>'}
+      ${segunda ? `<img class="foto-2" src="${foto(segunda)}" alt="" loading="lazy" width="800" height="1000">` : ''}
+      ${p.esgotado ? '<span class="selo-peca">Esgotado</span>' : p.peca_unica ? '<span class="selo-peca">Peça única</span>' : ''}
+    </a>
+    <button class="favoritar" type="button" data-favoritar="${p.id}" aria-label="Favoritar ${esc(p.nome)}" aria-pressed="false">${ICONE.coracao}</button>
+    <div class="peca-info">
+      ${p.marca ? `<p class="peca-marca">${esc(p.marca)}</p>` : ''}
+      <h3><a href="/peca/${esc(p.slug)}">${esc(p.nome)}</a></h3>
+      ${p.estado || p.tamanhos.length ? `<p class="peca-detalhe">${esc([p.tamanhos.length ? `Tam. ${p.tamanhos.join(', ')}` : '', p.estado].filter(Boolean).join(' · '))}</p>` : ''}
+      <p class="peca-preco">${p.preco_antigo ? `<s>${reais(p.preco_antigo)}</s>` : ''}${p.preco != null ? reais(p.preco) : 'Consulte'}</p>
+    </div>
+  </article>`;
+}
+
+// ---------- início ----------
+export function paginaInicio(cfg, produtos) {
+  const heroPc = cfg.heroDesktop ? foto(cfg.heroDesktop) : '/static/img/hero-padrao-pc.jpg';
+  const heroCel = cfg.heroMobile ? foto(cfg.heroMobile) : cfg.heroDesktop ? heroPc : '/static/img/hero-padrao-celular.jpg';
+  const logo = cfg.logo ? foto(cfg.logo) : '/static/img/logo-branca.png';
+  const ultimas = produtos.slice(0, 8);
+  const destaques = produtos.filter(p => p.destaque).slice(0, 8);
+  const corpo = `
+  <section class="hero ${cfg.heroPretoBranco ? 'pb' : ''}" aria-label="${esc(cfg.nomeLoja)}">
+    <picture class="hero-foto">
+      <source media="(max-width: 760px)" srcset="${esc(heroCel)}">
+      <img src="${esc(heroPc)}" alt="" fetchpriority="high">
+    </picture>
+    <div class="hero-centro">
+      ${cfg.mostrarLogoHero ? `<img class="hero-logo" src="${esc(logo)}" alt="${esc(cfg.nomeLoja)}" width="320" height="320">` : `<h1 class="hero-nome">${esc(cfg.nomeLoja)}</h1>`}
+      ${cfg.fraseHero ? `<p class="hero-frase">${esc(cfg.fraseHero)}</p>` : ''}
+    </div>
+    ${cfg.mostrarLogoHero ? `<h1 class="visualmente-oculto">${esc(cfg.nomeLoja)}</h1>` : ''}
+  </section>
+
+  <section class="secao" aria-labelledby="ultimas">
+    <div class="secao-cabeca">
+      <h2 id="ultimas">${esc(cfg.tituloPecas)}</h2>
+      <a class="link-linha" href="/pecas">Ver todas as peças</a>
+    </div>
+    ${ultimas.length ? `<div class="grade">${ultimas.map(cartao).join('')}</div>` : '<p class="vazio">As peças aparecem aqui assim que forem cadastradas no painel.</p>'}
+  </section>
+
+  ${destaques.length ? `
+  <section class="secao secao-cinza" aria-labelledby="destaques">
+    <div class="secao-cabeca"><h2 id="destaques">Destaques</h2></div>
+    <div class="trilho">${destaques.map(cartao).join('')}</div>
+  </section>` : ''}
+
+  ${cfg.selos?.filter(Boolean).length ? `
+  <section class="selos" aria-label="Por que comprar com a gente">
+    ${cfg.selos.filter(Boolean).map(s => `<p>${esc(s)}</p>`).join('')}
+  </section>` : ''}
+
+  <section class="secao sobre" id="sobre" aria-labelledby="sobre-titulo">
+    <h2 id="sobre-titulo">${esc(cfg.sobreTitulo)}</h2>
+    ${String(cfg.sobreTexto || '').split(/\n+/).filter(Boolean).map(par => `<p>${esc(par)}</p>`).join('')}
+  </section>
+
+  ${cfg.faq?.length ? `
+  <section class="secao duvidas" id="duvidas" aria-labelledby="duvidas-titulo">
+    <h2 id="duvidas-titulo">Perguntas frequentes</h2>
+    <div class="faq">${cfg.faq.map(f => `<details><summary>${esc(f.p)}</summary><p>${esc(f.r)}</p></details>`).join('')}</div>
+  </section>` : ''}`;
+  return moldura(cfg, produtos, { corpo, sobreFoto: true, imagemOg: heroPc });
+}
+
+// ---------- catálogo ----------
+const ORDENS = {
+  novidades: { nome: 'Mais recentes', f: (a, b) => b.id - a.id },
+  menor: { nome: 'Menor preço', f: (a, b) => (a.preco ?? Infinity) - (b.preco ?? Infinity) },
+  maior: { nome: 'Maior preço', f: (a, b) => (b.preco ?? -1) - (a.preco ?? -1) },
+};
+export function paginaCatalogo(cfg, produtos, { categoria = '', marca = '', ordem = 'novidades', busca = '' }) {
+  const termo = normalizar(busca);
+  const lista = produtos
+    .filter(p => (!categoria || p.categoria === categoria) && (!marca || p.marca === marca)
+      && (!termo || normalizar(`${p.nome} ${p.marca} ${p.categoria}`).includes(termo)))
+    .sort((ORDENS[ordem] ?? ORDENS.novidades).f);
+  const titulo = categoria || marca || (busca ? `Busca: ${busca}` : 'Todas as peças');
+  const url = mudar => {
+    const q = new URLSearchParams({ categoria, marca, ordem, busca, ...mudar });
+    for (const [k, v] of [...q]) if (!v || (k === 'ordem' && v === 'novidades')) q.delete(k);
+    return `/pecas${q.toString() ? `?${q}` : ''}`;
+  };
+  const filtro = (nome, itens, chave, atual) => itens.length > 1 ? `
+    <div class="filtro">
+      <span>${nome}</span>
+      <a href="${url({ [chave]: '' })}" ${!atual ? 'aria-current="true"' : ''}>Todas</a>
+      ${itens.map(i => `<a href="${url({ [chave]: i })}" ${i === atual ? 'aria-current="true"' : ''}>${esc(i)}</a>`).join('')}
+    </div>` : '';
+  const corpo = `
+  <section class="secao catalogo">
+    <div class="catalogo-cabeca">
+      <h1>${esc(titulo)}</h1>
+      <p class="nota">${lista.length} ${lista.length === 1 ? 'peça' : 'peças'}</p>
+    </div>
+    <div class="filtros">
+      ${filtro('Categoria', unicos(produtos.map(p => p.categoria)), 'categoria', categoria)}
+      ${filtro('Marca', unicos(produtos.map(p => p.marca)), 'marca', marca)}
+      <div class="filtro">
+        <span>Ordenar</span>
+        ${Object.entries(ORDENS).map(([id, o]) => `<a href="${url({ ordem: id })}" ${id === ordem ? 'aria-current="true"' : ''}>${o.nome}</a>`).join('')}
+      </div>
+    </div>
+    ${lista.length ? `<div class="grade">${lista.map(cartao).join('')}</div>` : `<p class="vazio">Nenhuma peça encontrada. <a href="/pecas">Ver todas</a></p>`}
+  </section>`;
+  return moldura(cfg, produtos, { titulo, corpo });
+}
+
+// ---------- peça ----------
+export function paginaPeca(cfg, produtos, p) {
+  const relacionados = produtos.filter(o => o.id !== p.id && (o.categoria === p.categoria || o.marca === p.marca)).slice(0, 4);
+  const mensagem = `Olá! Tenho interesse na peça ${p.marca ? `${p.marca} ` : ''}${p.nome}.`;
+  const corpo = `
+  <section class="secao peca-pagina">
+    <a class="voltar" href="/pecas">${ICONE.voltar}Todas as peças</a>
+    <div class="peca-grade">
+      <div class="galeria" data-galeria>
+        <div class="galeria-principal">
+          ${p.fotos[0] ? `<img src="${foto(p.fotos[0])}" alt="${esc(`${p.marca} ${p.nome}`)}" data-galeria-principal width="1000" height="1250">` : '<span class="sem-foto">Sem foto</span>'}
+        </div>
+        ${p.fotos.length > 1 ? `<div class="galeria-miniaturas">${p.fotos.map((f, i) => `<button type="button" data-foto="${foto(f)}" aria-label="Ver foto ${i + 1}" ${i === 0 ? 'aria-current="true"' : ''}><img src="${foto(f)}" alt="" loading="lazy"></button>`).join('')}</div>` : ''}
+      </div>
+      <div class="peca-texto">
+        ${p.peca_unica && !p.esgotado ? '<p class="selo-texto">Peça única</p>' : ''}
+        ${p.marca ? `<p class="peca-marca">${esc(p.marca)}</p>` : ''}
+        <h1>${esc(p.nome)}</h1>
+        <p class="peca-preco grande">${p.preco_antigo ? `<s>${reais(p.preco_antigo)}</s>` : ''}${p.preco != null ? reais(p.preco) : 'Consulte o valor'}</p>
+        ${p.estado ? `<p class="peca-estado">Estado: ${esc(p.estado)}</p>` : ''}
+        <form class="comprar-form" data-comprar data-id="${p.id}" data-slug="${esc(p.slug)}" data-nome="${esc(p.nome)}" data-marca="${esc(p.marca)}" data-preco="${p.preco ?? ''}" data-foto="${p.fotos[0] ? foto(p.fotos[0]) : ''}">
+          ${p.tamanhos.length ? `
+          <fieldset class="tamanhos">
+            <legend>Tamanho</legend>
+            ${p.tamanhos.map((t, i) => `<label><input type="radio" name="tamanho" value="${esc(t)}" ${p.tamanhos.length === 1 ? 'checked' : ''} ${p.esgotado ? 'disabled' : ''}><span>${esc(t)}</span></label>`).join('')}
+          </fieldset>` : ''}
+          <p class="form-erro" role="alert" hidden></p>
+          ${p.esgotado
+            ? '<p class="esgotado-aviso">Esta peça esgotou.</p>'
+            : `<button class="botao" type="submit">Adicionar à sacola</button>
+               ${p.link_pagamento ? `<a class="botao botao-linha" href="${esc(p.link_pagamento)}" target="_blank" rel="noopener">Comprar agora</a>` : ''}`}
+          <a class="botao botao-linha" href="${esc(linkWhats(cfg, mensagem))}" target="_blank" rel="noopener">${p.esgotado ? 'Avise-me quando chegar' : 'Tirar dúvida no WhatsApp'}</a>
+          <button class="favoritar-texto" type="button" data-favoritar="${p.id}" aria-pressed="false">${ICONE.coracao}<span>Favoritar</span></button>
+        </form>
+        ${p.descricao ? `<div class="peca-descricao">${String(p.descricao).split(/\n+/).filter(Boolean).map(par => `<p>${esc(par)}</p>`).join('')}</div>` : ''}
+      </div>
+    </div>
+  </section>
+  ${relacionados.length ? `
+  <section class="secao" aria-labelledby="relacionados">
+    <div class="secao-cabeca"><h2 id="relacionados">Você também pode gostar</h2></div>
+    <div class="grade">${relacionados.map(cartao).join('')}</div>
+  </section>` : ''}`;
+  return moldura(cfg, produtos, { titulo: `${p.marca ? `${p.marca} ` : ''}${p.nome}`, descricao: p.descricao?.slice(0, 160), corpo, imagemOg: p.fotos[0] ? foto(p.fotos[0]) : '' });
+}
+
+// ---------- favoritos (a lista fica no aparelho de quem visita) ----------
+export function paginaFavoritos(cfg, produtos) {
+  const corpo = `
+  <section class="secao catalogo">
+    <div class="catalogo-cabeca"><h1>Favoritos</h1></div>
+    <div class="grade" data-lista-favoritos></div>
+    <p class="vazio" data-favoritos-vazio hidden>Você ainda não favoritou nenhuma peça. Toque no coração de uma peça para guardar aqui.</p>
+    <template data-todas>${produtos.map(p => `<div data-id="${p.id}">${cartao(p)}</div>`).join('')}</template>
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Favoritos', corpo });
+}
+
+export function pagina404(cfg, produtos) {
+  const corpo = `
+  <section class="secao catalogo">
+    <div class="catalogo-cabeca"><h1>Página não encontrada</h1></div>
+    <p class="vazio">Essa página não existe ou a peça saiu do ar. <a href="/pecas">Ver todas as peças</a></p>
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Não encontrada', corpo });
+}
+
+// ---------- painel (a tela é montada pelo admin.js) ----------
+export function paginaAdmin() {
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Painel da loja</title>
+  <link rel="icon" href="/static/img/logo-cor.png" type="image/png">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500&display=swap">
+  <link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body>
+  <div id="painel"></div>
+  <script type="module" src="/static/js/admin.js"></script>
+</body>
+</html>`;
+}
