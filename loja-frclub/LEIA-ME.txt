@@ -26,6 +26,25 @@ COLOCAR NO AR (Render)
   5) Clique em "Create Web Service". Quando terminar, abra o endereço do site + /admin,
      entre com a senha e comece pelo item "Aparência".
 
+PAGAMENTO E FRETE NO SITE (Mercado Pago + SuperFrete)
+  Com isso ligado, o cliente calcula o frete pelo CEP, preenche os dados e paga no site
+  (Pix, cartão em até 12x ou boleto). Enquanto não estiver ligado, a sacola finaliza pelo WhatsApp.
+  1) Mercado Pago: crie a conta em mercadopago.com.br. Depois, em mercadopago.com.br/developers:
+     "Suas integrações" > "Criar aplicação" (tipo Checkout Pro) > "Credenciais de produção".
+     Copie o "Access Token" (começa com APP_USR-).
+  2) SuperFrete: crie a conta em superfrete.com. Depois: "Integrações" > "Desenvolvedores" >
+     gere um token.
+  3) No Render, em "Environment", crie:
+       MP_ACCESS_TOKEN     o Access Token do Mercado Pago
+       SUPERFRETE_TOKEN    o token da SuperFrete
+     Nunca coloque essas chaves em arquivo do GitHub nem mande por mensagem.
+  4) No painel (/admin) > "Entrega e pagamento": preencha o CEP de onde as peças saem e as
+     medidas da caixa de uma peça. Os três itens de "Situação" precisam ficar verdes.
+  5) Os pedidos aparecem na aba "Pedidos" do painel, com o endereço para a etiqueta.
+     Quando o pagamento é aprovado, a peça marcada como "Peça única" sai da loja sozinha.
+     Depois de postar, mude a situação para "Enviado" e cole o código de rastreio.
+  A etiqueta continua sendo gerada no site da SuperFrete, com os dados que aparecem no pedido.
+
 DOMÍNIO PRÓPRIO (ex.: frclub.com.br)
   Compre em registro.br. No Render: Settings > Custom Domains > Add, e siga o passo a passo.
 
@@ -33,10 +52,8 @@ DICAS
   - Imagem do topo: uma deitada para o computador e uma em pé para o celular.
     O painel já diminui o tamanho das fotos sozinho antes de enviar.
   - Logo: PNG com fundo transparente, de preferência branca (o topo é escuro).
-  - Pagamento: se tiver um link de pagamento (Pagar.me ou outro), cole no campo
-    "Link de pagamento" da peça. Aparece o botão "Comprar agora".
-    Sem link, o cliente monta a sacola e finaliza pelo WhatsApp.
-  - Nunca coloque no site a chave secreta do Pagar.me.
+  - Link de pagamento por peça (opcional): só é usado enquanto o pagamento no site
+    (Mercado Pago) não estiver ligado.
   - Revise as Perguntas frequentes (aba "Contato e textos"): precisam valer para a sua loja.
 
 SEGURANÇA (o que o site já faz sozinho)

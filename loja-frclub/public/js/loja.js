@@ -88,7 +88,11 @@
         <button type="button" data-remover="${i}">Remover</button>
       </div>`).join('');
     const total = sacola.reduce((t, p) => t + (p.preco || 0), 0);
-    pe.innerHTML = `
+    pe.innerHTML = dados.checkout ? `
+      <p class="sacola-total"><span>Subtotal</span><span>${reais(total)}</span></p>
+      <a class="botao" href="/checkout">Finalizar compra</a>
+      <a class="botao botao-linha" href="${esc(linkPedido())}" target="_blank" rel="noopener">Comprar pelo WhatsApp</a>
+      <p class="nota">O frete é calculado com o seu CEP na próxima tela.</p>` : `
       <p class="sacola-total"><span>Total</span><span>${reais(total)}</span></p>
       <a class="botao" href="${esc(linkPedido())}" target="_blank" rel="noopener">Finalizar pelo WhatsApp</a>
       <p class="nota">A gente confirma a disponibilidade, o frete e envia o pagamento.</p>`;
@@ -121,11 +125,147 @@
     }
     erro.hidden = true;
     const d = form.dataset;
-    sacola.push({ id: Number(d.id), slug: d.slug, nome: d.nome, marca: d.marca, preco: d.preco ? Number(d.preco) : null, foto: d.foto, tamanho });
+    const igual = p => p.id === Number(d.id) && p.tamanho === tamanho;
+    // Comprar agora não duplica a peça se ela já estiver na sacola.
+    if (!(e.submitter?.hasAttribute('data-comprar-agora') && sacola.some(igual))) {
+      sacola.push({ id: Number(d.id), slug: d.slug, nome: d.nome, marca: d.marca, preco: d.preco ? Number(d.preco) : null, foto: d.foto, tamanho });
+      gravar('frclub-sacola', sacola);
+    }
+    contarSacola();
+    if (e.submitter?.hasAttribute('data-comprar-agora')) location.href = '/checkout';
+    else abrirSacola();
+  });
+
+  // ---------- frete ----------
+  const mascaraCep = input => input.addEventListener('input', () => {
+    const n = input.value.replace(/\D/g, '').slice(0, 8);
+    input.value = n.length > 5 ? `${n.slice(0, 5)}-${n.slice(5)}` : n;
+  });
+  $$('[data-cep]').forEach(mascaraCep);
+  async function postar(caminho, corpo) {
+    let r;
+    try {
+      r = await fetch(caminho, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    } catch {
+      throw new Error('Sem conexão. Confira a internet e tente de novo.');
+    }
+    const resposta = await r.json().catch(() => null);
+    if (!r.ok) throw new Error(resposta?.erro || 'Algo deu errado. Tente de novo.');
+    return resposta;
+  }
+  const prazo = o => (o.prazo ? `até ${o.prazo} ${o.prazo === 1 ? 'dia útil' : 'dias úteis'}` : '');
+  const nomeFrete = o => `${o.empresa && !o.nome.toLowerCase().includes(o.empresa.toLowerCase()) ? `${o.empresa} ` : ''}${o.nome}`;
+
+  const formFrete = $('[data-frete-peca]');
+  formFrete?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const saida = $('[data-frete-resultado]', formFrete);
+    const botao = $('button', formFrete);
+    botao.disabled = true;
+    saida.innerHTML = '<p class="nota">Calculando…</p>';
+    try {
+      const opcoes = await postar('/api/frete', { cep: formFrete.cep.value, itens: [{ id: Number(formFrete.dataset.fretePeca) }] });
+      saida.innerHTML = opcoes.map(o => `<p class="frete-opcao"><span>${esc(nomeFrete(o))}<small>${esc(prazo(o))}</small></span><b>${reais(o.preco)}</b></p>`).join('');
+    } catch (falha) {
+      saida.innerHTML = `<p class="form-erro">${esc(falha.message)}</p>`;
+    } finally {
+      botao.disabled = false;
+    }
+  });
+
+  // ---------- checkout ----------
+  const checkout = $('[data-checkout]');
+  if (checkout) {
+    const saida = $('[data-frete-resultado]', checkout);
+    const erro = $('.form-erro', checkout);
+    const itensPedido = () => sacola.map(p => ({ id: p.id, tamanho: p.tamanho || '' }));
+    const subtotal = sacola.reduce((t, p) => t + (p.preco || 0), 0);
+    let opcoes = [];
+    let cepCotado = '';
+    const salvo = ler('frclub-cliente', {});
+    for (const [k, v] of Object.entries(salvo)) if (checkout[k] && typeof v === 'string') checkout[k].value = v;
+
+    if (!sacola.length) {
+      checkout.innerHTML = '<p class="vazio">Sua sacola está vazia. <a href="/pecas">Ver as peças</a></p>';
+    } else {
+      $('[data-resumo-itens]', checkout).innerHTML = sacola.map(p => `
+        <div class="resumo-item">
+          ${p.foto ? `<img src="${esc(p.foto)}" alt="">` : '<span class="sem-img"></span>'}
+          <div><p>${esc(`${p.marca ? `${p.marca} ` : ''}${p.nome}`)}</p>${p.tamanho ? `<p class="nota">Tamanho ${esc(p.tamanho)}</p>` : ''}</div>
+          <span>${p.preco ? reais(p.preco) : '—'}</span>
+        </div>`).join('');
+      $('[data-subtotal]', checkout).textContent = reais(subtotal);
+    }
+    function atualizarTotal() {
+      const escolhida = opcoes.find(o => String(o.id) === checkout.querySelector('input[name="frete"]:checked')?.value);
+      $('[data-valor-frete]', checkout).textContent = escolhida ? reais(escolhida.preco) : '—';
+      $('[data-total]', checkout).textContent = escolhida ? reais(subtotal + escolhida.preco) : '—';
+    }
+    async function cotar() {
+      const cep = checkout.cep.value.replace(/\D/g, '');
+      if (cep.length !== 8 || cep === cepCotado) return;
+      cepCotado = cep;
+      saida.innerHTML = '<p class="nota">Calculando o frete…</p>';
+      // Preenche o endereço pelo CEP, sem apagar o que a pessoa já digitou.
+      fetch(`/api/cep/${cep}`).then(r => (r.ok ? r.json() : null)).then(end => {
+        if (!end) return;
+        for (const k of ['rua', 'bairro', 'cidade', 'uf']) if (end[k] && !checkout[k].value) checkout[k].value = end[k];
+        if (!checkout.numero.value) checkout.numero.focus();
+      }).catch(() => {});
+      try {
+        opcoes = await postar('/api/frete', { cep, itens: itensPedido() });
+        saida.innerHTML = opcoes.map((o, i) => `
+          <label class="frete-escolha">
+            <input type="radio" name="frete" value="${o.id}" ${i === 0 ? 'checked' : ''}>
+            <span>${esc(nomeFrete(o))}<small>${esc(prazo(o))}</small></span>
+            <b>${reais(o.preco)}</b>
+          </label>`).join('');
+      } catch (falha) {
+        opcoes = [];
+        cepCotado = '';
+        saida.innerHTML = `<p class="form-erro">${esc(falha.message)}</p>`;
+      }
+      atualizarTotal();
+    }
+    checkout.cep?.addEventListener('input', cotar);
+    checkout.addEventListener('change', e => { if (e.target.name === 'frete') atualizarTotal(); });
+    if (checkout.cep?.value) cotar();
+
+    checkout.addEventListener('submit', async e => {
+      e.preventDefault();
+      erro.hidden = true;
+      const frete = checkout.querySelector('input[name="frete"]:checked')?.value;
+      const campos = ['nome', 'email', 'telefone', 'cpf', 'cep', 'rua', 'numero', 'complemento', 'bairro', 'cidade', 'uf'];
+      const cliente = Object.fromEntries(campos.map(k => [k, checkout[k].value.trim()]));
+      const faltando = campos.find(k => checkout[k].required && !cliente[k]);
+      const mostrar = texto => { erro.textContent = texto; erro.hidden = false; };
+      if (faltando) { checkout[faltando].focus(); return mostrar('Preencha todos os campos.'); }
+      if (!frete) return mostrar('Digite o CEP e escolha a forma de entrega.');
+      const { cpf, ...lembrar } = cliente; // o CPF não fica guardado no aparelho
+      gravar('frclub-cliente', lembrar);
+      const botao = $('button[type="submit"]', checkout);
+      botao.disabled = true;
+      botao.textContent = 'Abrindo o pagamento…';
+      try {
+        const pedido = await postar('/api/pedidos', { itens: itensPedido(), cliente, frete: Number(frete) });
+        gravar('frclub-ultimo-pedido', pedido.codigo);
+        location.href = pedido.link;
+      } catch (falha) {
+        mostrar(falha.message);
+        botao.disabled = false;
+        botao.textContent = 'Ir para o pagamento';
+      }
+    });
+  }
+
+  // ---------- página do pedido ----------
+  const pedido = $('.pedido');
+  if (pedido?.hasAttribute('data-pago') && sacola.length) {
+    sacola = []; // pago: esvazia a sacola
     gravar('frclub-sacola', sacola);
     contarSacola();
-    abrirSacola();
-  });
+  }
+  if (pedido?.hasAttribute('data-atualizar')) setTimeout(() => location.reload(), 15000);
 
   const principal = $('[data-galeria-principal]');
   $$('[data-foto]').forEach(b => b.addEventListener('click', () => {

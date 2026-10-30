@@ -1,4 +1,5 @@
 // Páginas públicas da loja, montadas no servidor (abrem rápido e aparecem bem no Google e no WhatsApp).
+import { freteLigado, pagamentoLigado } from './pagamento.js';
 
 const ENT = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ENT[c]);
@@ -23,6 +24,8 @@ function linkWhats(cfg, texto) {
   if (!cfg.whatsapp) return '#contato';
   return `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(texto ?? cfg.mensagemWhatsapp)}`;
 }
+
+const checkoutLigado = cfg => freteLigado(cfg) && pagamentoLigado();
 
 const unicos = lista => [...new Set(lista.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
@@ -132,7 +135,7 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
   </div>
 
   ${cfg.whatsapp ? `<a class="whats-flutuante" href="${esc(linkWhats(cfg))}" target="_blank" rel="noopener" aria-label="Falar no WhatsApp">${ICONE.whatsapp}</a>` : ''}
-  <div id="loja-dados" hidden data-whatsapp="${esc(cfg.whatsapp)}" data-loja="${esc(cfg.nomeLoja)}"></div>
+  <div id="loja-dados" hidden data-whatsapp="${esc(cfg.whatsapp)}" data-loja="${esc(cfg.nomeLoja)}" data-checkout="${checkoutLigado(cfg) ? '1' : ''}"></div>
   <script src="/static/js/loja.js" defer></script>
 </body>
 </html>`;
@@ -283,11 +286,24 @@ export function paginaPeca(cfg, produtos, p) {
           <p class="form-erro" role="alert" hidden></p>
           ${p.esgotado
             ? '<p class="esgotado-aviso">Esta peça esgotou.</p>'
-            : `<button class="botao" type="submit">Adicionar à sacola</button>
-               ${p.link_pagamento ? `<a class="botao botao-linha" href="${esc(p.link_pagamento)}" target="_blank" rel="noopener">Comprar agora</a>` : ''}`}
+            : checkoutLigado(cfg) && p.preco > 0
+              ? `<button class="botao" type="submit" data-comprar-agora>Comprar agora</button>
+                 <button class="botao botao-linha" type="submit">Adicionar à sacola</button>`
+              : `<button class="botao" type="submit">Adicionar à sacola</button>
+                 ${p.link_pagamento ? `<a class="botao botao-linha" href="${esc(p.link_pagamento)}" target="_blank" rel="noopener">Comprar agora</a>` : ''}`}
           <a class="botao botao-linha" href="${esc(linkWhats(cfg, mensagem))}" target="_blank" rel="noopener">${p.esgotado ? 'Avise-me quando chegar' : 'Tirar dúvida no WhatsApp'}</a>
           <button class="favoritar-texto" type="button" data-favoritar="${p.id}" aria-pressed="false">${ICONE.coracao}<span>Favoritar</span></button>
         </form>
+        ${freteLigado(cfg) && !p.esgotado && p.preco > 0 ? `
+        <form class="frete-form" data-frete-peca="${p.id}" novalidate>
+          <label for="cep-peca">Calcular frete</label>
+          <div class="frete-linha">
+            <input id="cep-peca" name="cep" inputmode="numeric" autocomplete="postal-code" placeholder="00000-000" maxlength="9" data-cep>
+            <button class="botao botao-linha" type="submit">Calcular</button>
+          </div>
+          <a class="nota" href="https://buscacepinter.correios.com.br/app/endereco/index.php" target="_blank" rel="noopener">Não sei meu CEP</a>
+          <div class="frete-opcoes" data-frete-resultado aria-live="polite"></div>
+        </form>` : ''}
         ${p.descricao ? `<div class="peca-descricao">${String(p.descricao).split(/\n+/).filter(Boolean).map(par => `<p>${esc(par)}</p>`).join('')}</div>` : ''}
       </div>
     </div>
@@ -298,6 +314,88 @@ export function paginaPeca(cfg, produtos, p) {
     <div class="grade">${relacionados.map(cartao).join('')}</div>
   </section>` : ''}`;
   return moldura(cfg, produtos, { titulo: `${p.marca ? `${p.marca} ` : ''}${p.nome}`, descricao: p.descricao?.slice(0, 160), corpo, imagemOg: p.fotos[0] ? foto(p.fotos[0]) : '' });
+}
+
+// ---------- checkout (a sacola vem do aparelho; o servidor confere preço e frete) ----------
+export function paginaCheckout(cfg, produtos, ligado) {
+  const campo = (nome, rotulo, extra = '', classe = '') => `<label class="campo ${classe}"><span>${rotulo}</span><input name="${nome}" ${extra}></label>`;
+  const corpo = ligado ? `
+  <section class="secao checkout">
+    <div class="catalogo-cabeca"><h1>Finalizar compra</h1></div>
+    <form class="checkout-grade" data-checkout novalidate>
+      <div class="checkout-dados">
+        <fieldset>
+          <legend>Seus dados</legend>
+          ${campo('nome', 'Nome completo', 'autocomplete="name" maxlength="120" required', 'largo')}
+          ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required')}
+          ${campo('telefone', 'Celular com DDD', 'type="tel" autocomplete="tel" inputmode="tel" maxlength="20" required')}
+          ${campo('cpf', 'CPF', 'inputmode="numeric" maxlength="14" required')}
+        </fieldset>
+        <fieldset>
+          <legend>Entrega</legend>
+          ${campo('cep', 'CEP', 'inputmode="numeric" autocomplete="postal-code" maxlength="9" placeholder="00000-000" required data-cep')}
+          ${campo('rua', 'Rua', 'autocomplete="address-line1" maxlength="120" required', 'largo')}
+          ${campo('numero', 'Número', 'maxlength="20" required')}
+          ${campo('complemento', 'Complemento (opcional)', 'autocomplete="address-line2" maxlength="80"')}
+          ${campo('bairro', 'Bairro', 'maxlength="80" required')}
+          ${campo('cidade', 'Cidade', 'autocomplete="address-level2" maxlength="80" required')}
+          ${campo('uf', 'Estado (sigla)', 'autocomplete="address-level1" maxlength="2" required')}
+        </fieldset>
+        <fieldset>
+          <legend>Forma de entrega</legend>
+          <div class="frete-opcoes" data-frete-resultado aria-live="polite"><p class="nota">Digite o CEP para ver as opções.</p></div>
+        </fieldset>
+      </div>
+      <aside class="checkout-resumo">
+        <h2>Resumo</h2>
+        <div data-resumo-itens></div>
+        <p class="resumo-linha"><span>Peças</span><span data-subtotal>—</span></p>
+        <p class="resumo-linha"><span>Frete</span><span data-valor-frete>—</span></p>
+        <p class="resumo-linha total"><span>Total</span><span data-total>—</span></p>
+        <p class="form-erro" role="alert" hidden></p>
+        <button class="botao" type="submit">Ir para o pagamento</button>
+        <p class="nota">Você paga com Pix, cartão em até 12x ou boleto no ambiente seguro do Mercado Pago.</p>
+      </aside>
+    </form>
+  </section>` : `
+  <section class="secao catalogo">
+    <div class="catalogo-cabeca"><h1>Finalizar compra</h1></div>
+    <p class="vazio">O pagamento pelo site ainda não está ligado. Abra a sacola e finalize pelo WhatsApp.</p>
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Finalizar compra', corpo });
+}
+
+const NOME_STATUS = {
+  aguardando: ['Aguardando pagamento', 'Assim que o pagamento for aprovado, esta página muda sozinha. Pix costuma cair na hora; boleto, em até 3 dias úteis.'],
+  pago: ['Pagamento aprovado', 'Obrigado! Já estamos separando o seu pedido. Você recebe o código de rastreio quando ele for enviado.'],
+  enviado: ['Pedido enviado', 'Seu pedido já está a caminho.'],
+  cancelado: ['Pedido cancelado', 'Se tiver alguma dúvida, fale com a gente.'],
+};
+export function paginaPedido(cfg, produtos, pedido) {
+  const [titulo, texto] = NOME_STATUS[pedido.status] ?? NOME_STATUS.aguardando;
+  const recusado = pedido.status === 'aguardando' && ['rejected', 'cancelled'].includes(pedido.mp_status);
+  const corpo = `
+  <section class="secao checkout pedido" ${pedido.status === 'aguardando' ? 'data-atualizar' : ''} ${['pago', 'enviado'].includes(pedido.status) ? 'data-pago' : ''}>
+    <p class="peca-marca">Pedido ${esc(pedido.codigo)}</p>
+    <h1>${recusado ? 'Pagamento não aprovado' : titulo}</h1>
+    <p>${recusado ? 'O pagamento foi recusado. Tente de novo com outra forma de pagamento.' : texto}</p>
+    ${pedido.rastreio ? `<p>Código de rastreio: <b>${esc(pedido.rastreio)}</b></p>` : ''}
+    ${pedido.status === 'aguardando' && pedido.mp_link ? `<a class="botao" href="${esc(pedido.mp_link)}">${recusado ? 'Tentar pagar de novo' : 'Pagar agora'}</a>` : ''}
+    <div class="checkout-resumo">
+      ${pedido.itens.map(i => `
+        <div class="resumo-item">
+          ${i.foto ? `<img src="${esc(i.foto)}" alt="">` : '<span class="sem-img"></span>'}
+          <div><p>${esc(`${i.marca ? `${i.marca} ` : ''}${i.nome}`)}</p>${i.tamanho ? `<p class="nota">Tamanho ${esc(i.tamanho)}</p>` : ''}${i.quantidade > 1 ? `<p class="nota">${i.quantidade} unidades</p>` : ''}</div>
+          <span>${reais(i.preco * i.quantidade)}</span>
+        </div>`).join('')}
+      <p class="resumo-linha"><span>Peças</span><span>${reais(pedido.subtotal)}</span></p>
+      <p class="resumo-linha"><span>Frete · ${esc(pedido.frete_nome)}${pedido.frete_prazo ? ` · até ${pedido.frete_prazo} dias úteis` : ''}</span><span>${reais(pedido.frete_valor)}</span></p>
+      <p class="resumo-linha total"><span>Total</span><span>${reais(pedido.total)}</span></p>
+    </div>
+    <p class="nota">Entrega para ${esc(pedido.cliente.nome)} · ${esc(`${pedido.cliente.rua}, ${pedido.cliente.numero} · ${pedido.cliente.cidade}/${pedido.cliente.uf}`)}</p>
+    ${cfg.whatsapp ? `<a class="botao botao-linha" href="${esc(linkWhats(cfg, `Olá! Sobre o meu pedido ${pedido.codigo}.`))}" target="_blank" rel="noopener">Falar no WhatsApp</a>` : ''}
+  </section>`;
+  return moldura(cfg, produtos, { titulo, corpo });
 }
 
 // ---------- favoritos (a lista fica no aparelho de quem visita) ----------

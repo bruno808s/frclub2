@@ -101,7 +101,7 @@ function telaEntrar() {
 }
 
 // ---------- moldura do painel ----------
-const ABAS = [['pecas', 'Peças'], ['aparencia', 'Aparência'], ['textos', 'Contato e textos']];
+const ABAS = [['pecas', 'Peças'], ['pedidos', 'Pedidos'], ['aparencia', 'Aparência'], ['textos', 'Contato e textos'], ['entrega', 'Entrega e pagamento']];
 function telaPainel(aba) {
   raiz.innerHTML = `
   <header class="painel-topo">
@@ -119,6 +119,7 @@ function telaPainel(aba) {
   raiz.querySelector('[data-sair]').addEventListener('click', async () => { await api('POST', '/sair').catch(() => {}); telaEntrar(); });
   const corpo = raiz.querySelector('[data-corpo]');
   if (aba === 'pecas') abaPecas(corpo);
+  else if (aba === 'pedidos') abaPedidos(corpo);
   else abaConfig(corpo, aba);
 }
 
@@ -307,7 +308,87 @@ function formPeca(corpo, p) {
   });
 }
 
-// ---------- aparência, contato e textos ----------
+// ---------- pedidos ----------
+const STATUS = { aguardando: 'Aguardando pagamento', pago: 'Pago: enviar', enviado: 'Enviado', cancelado: 'Cancelado' };
+const formatarCpf = c => String(c).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+const formatarCep = c => String(c).replace(/^(\d{5})(\d{3})$/, '$1-$2');
+async function abaPedidos(corpo) {
+  corpo.innerHTML = '<p class="nota">Carregando…</p>';
+  let pedidos;
+  try {
+    pedidos = await api('GET', '/admin/pedidos');
+  } catch (e) {
+    corpo.innerHTML = `<p class="erro">${esc(e.message)}</p>`;
+    return;
+  }
+  let filtro = pedidos.some(p => p.status === 'pago') ? 'pago' : 'todos';
+  corpo.innerHTML = `
+    <div class="cabeca-aba">
+      <div><h1>Pedidos</h1><p class="nota">${pedidos.filter(p => p.status === 'pago').length} pagos esperando envio</p></div>
+    </div>
+    <div class="filtro-pedidos">
+      <label class="campo"><span>Mostrar</span>
+        <select data-filtro>
+          <option value="todos">Todos</option>
+          ${Object.entries(STATUS).map(([id, nome]) => `<option value="${id}">${nome}</option>`).join('')}
+        </select>
+      </label>
+    </div>
+    <ul class="lista-pedidos" data-lista></ul>`;
+  const lista = corpo.querySelector('[data-lista]');
+  corpo.querySelector('[data-filtro]').value = filtro;
+  const desenhar = () => {
+    const visiveis = pedidos.filter(p => filtro === 'todos' || p.status === filtro);
+    lista.innerHTML = visiveis.length ? visiveis.map(p => {
+      const c = p.cliente;
+      return `
+      <li class="pedido-card" data-id="${p.id}">
+        <div class="pedido-topo">
+          <div><b>${esc(c.nome)}</b><span class="nota"> · ${new Date(`${p.criado_em.replace(' ', 'T')}Z`).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })} · ${esc(p.codigo)}</span></div>
+          <span class="selo-status status-${esc(p.status)}">${STATUS[p.status] ?? esc(p.status)}</span>
+        </div>
+        <ul class="pedido-itens">
+          ${p.itens.map(i => `<li>${i.quantidade > 1 ? `${i.quantidade}× ` : ''}${esc(`${i.marca ? `${i.marca} ` : ''}${i.nome}`)}${i.tamanho ? ` · tam. ${esc(i.tamanho)}` : ''} · ${reais(i.preco * i.quantidade)}</li>`).join('')}
+          <li>Frete ${esc(p.frete_nome)} · ${reais(p.frete_valor)}</li>
+          <li><b>Total ${reais(p.total)}</b>${p.mp_status ? ` <span class="nota">(Mercado Pago: ${esc(p.mp_status)})</span>` : ''}</li>
+        </ul>
+        <p class="pedido-endereco">
+          ${esc(c.nome)} · CPF ${esc(formatarCpf(c.cpf))}<br>
+          ${esc(`${c.rua}, ${c.numero}${c.complemento ? ` - ${c.complemento}` : ''}`)}<br>
+          ${esc(`${c.bairro} · ${c.cidade}/${c.uf} · CEP ${formatarCep(c.cep)}`)}<br>
+          ${esc(c.email)} · <a href="https://wa.me/55${esc(c.telefone)}" target="_blank" rel="noopener">${esc(c.telefone)}</a>
+        </p>
+        <div class="pedido-acoes">
+          <label class="campo"><span>Situação</span>
+            <select data-status>${Object.entries(STATUS).map(([id, nome]) => `<option value="${id}" ${id === p.status ? 'selected' : ''}>${nome}</option>`).join('')}</select>
+          </label>
+          <label class="campo"><span>Código de rastreio</span><input data-rastreio maxlength="60" value="${esc(p.rastreio)}"></label>
+          <button class="botao botao-linha" type="button" data-salvar>Salvar</button>
+        </div>
+      </li>`;
+    }).join('') : `<li class="nota vazio">${pedidos.length ? 'Nenhum pedido nessa situação.' : 'Nenhum pedido ainda. Eles aparecem aqui quando alguém finaliza uma compra no site.'}</li>`;
+  };
+  desenhar();
+  corpo.querySelector('[data-filtro]').addEventListener('change', e => { filtro = e.target.value; desenhar(); });
+  lista.addEventListener('click', async e => {
+    const botao = e.target.closest('[data-salvar]');
+    if (!botao) return;
+    const card = botao.closest('[data-id]');
+    const id = Number(card.dataset.id);
+    botao.disabled = true;
+    try {
+      const novo = await api('PATCH', `/admin/pedidos/${id}`, { status: card.querySelector('[data-status]').value, rastreio: card.querySelector('[data-rastreio]').value });
+      pedidos = pedidos.map(p => (p.id === id ? novo : p));
+      avisar('Pedido salvo. O cliente vê a mudança na página do pedido.');
+      desenhar();
+    } catch (falha) {
+      avisar(falha.message, 'erro');
+      botao.disabled = false;
+    }
+  });
+}
+
+// ---------- aparência, contato, textos, entrega e pagamento ----------
 async function abaConfig(corpo, aba) {
   corpo.innerHTML = '<p class="nota">Carregando…</p>';
   let cfg;
@@ -357,6 +438,40 @@ async function abaConfig(corpo, aba) {
       </section>
       <p class="erro" role="alert" hidden></p>
       <div class="rodape-form"><button class="botao" type="submit">Salvar aparência</button></div>
+    </form>`;
+  } else if (aba === 'entrega') {
+    const servicos = String(cfg.freteServicos || '').split(',');
+    const ligado = (ok, sim, nao) => `<p class="integracao ${ok ? 'ok' : ''}">${ok ? '●' : '○'} ${ok ? sim : nao}</p>`;
+    corpo.innerHTML = `
+    <form class="form-config" novalidate>
+      <div class="cabeca-aba"><h1>Entrega e pagamento</h1></div>
+      <section class="bloco">
+        <h2>Situação</h2>
+        ${ligado(cfg.integracoes.pagamento, 'Mercado Pago ligado: o cliente paga no site.', 'Mercado Pago desligado: falta a variável MP_ACCESS_TOKEN no Render.')}
+        ${ligado(cfg.integracoes.frete, 'SuperFrete ligado.', 'SuperFrete desligado: falta a variável SUPERFRETE_TOKEN no Render.')}
+        ${ligado(/^\d{8}$/.test(cfg.cepOrigem), 'CEP de origem preenchido.', 'Falta o CEP de onde as peças saem (abaixo).')}
+        <p class="nota">Enquanto algum item estiver desligado, a sacola continua finalizando pelo WhatsApp.</p>
+      </section>
+      <section class="bloco grade-campos">
+        <h2 class="largo">De onde as peças saem</h2>
+        <label class="campo"><span>CEP de origem</span><input name="cepOrigem" inputmode="numeric" maxlength="9" value="${esc(formatarCep(cfg.cepOrigem))}" placeholder="00000-000"></label>
+      </section>
+      <section class="bloco grade-campos">
+        <h2 class="largo">Caixa padrão de uma peça</h2>
+        <p class="nota largo">Medidas de uma peça já embalada. Com mais peças no pedido, a SuperFrete calcula a caixa certa sozinha.</p>
+        <label class="campo"><span>Peso (kg)</span><input name="pacotePeso" data-numero inputmode="decimal" value="${esc(paraCampo(cfg.pacotePeso))}"></label>
+        <label class="campo"><span>Altura (cm)</span><input name="pacoteAltura" data-numero inputmode="decimal" value="${esc(paraCampo(cfg.pacoteAltura))}"></label>
+        <label class="campo"><span>Largura (cm)</span><input name="pacoteLargura" data-numero inputmode="decimal" value="${esc(paraCampo(cfg.pacoteLargura))}"></label>
+        <label class="campo"><span>Comprimento (cm)</span><input name="pacoteComprimento" data-numero inputmode="decimal" value="${esc(paraCampo(cfg.pacoteComprimento))}"></label>
+      </section>
+      <section class="bloco">
+        <h2>Formas de envio oferecidas</h2>
+        ${[[1, 'PAC (Correios)'], [2, 'SEDEX (Correios)'], [17, 'Mini Envios (Correios, até 300 g)'], [3, 'Jadlog'], [33, 'J&T Express']]
+          .map(([id, nome]) => `<label class="chave"><input type="checkbox" data-servico value="${id}" ${servicos.includes(String(id)) ? 'checked' : ''}><span>${nome}</span></label>`).join('')}
+        <p class="nota">Jadlog e J&T só aparecem se houver ponto de postagem perto do seu CEP.</p>
+      </section>
+      <p class="erro" role="alert" hidden></p>
+      <div class="rodape-form"><button class="botao" type="submit">Salvar</button></div>
     </form>`;
   } else {
     corpo.innerHTML = `
@@ -434,8 +549,9 @@ async function abaConfig(corpo, aba) {
     const dados = { ...imagens };
     for (const el of form.querySelectorAll('input[name], textarea[name]')) {
       if (el.name === 'selo' || el.type === 'file') continue;
-      dados[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+      dados[el.name] = el.type === 'checkbox' ? el.checked : el.hasAttribute('data-numero') ? lerValor(el.value) : el.value;
     }
+    if (aba === 'entrega') dados.freteServicos = [...form.querySelectorAll('[data-servico]:checked')].map(c => Number(c.value));
     if (aba === 'textos') {
       dados.selos = [...form.querySelectorAll('[name="selo"]')].map(i => i.value.trim()).filter(Boolean);
       dados.faq = [...form.querySelectorAll('.faq-linha')].map(l => ({ p: l.querySelector('[data-p]').value.trim(), r: l.querySelector('[data-r]').value.trim() })).filter(f => f.p && f.r);

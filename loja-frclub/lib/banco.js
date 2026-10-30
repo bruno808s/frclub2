@@ -22,9 +22,16 @@ export const CONFIG_PADRAO = {
   sobreTitulo: 'Sobre a FR CLUB',
   sobreTexto: 'Escreva aqui quem é a FR CLUB: o que vocês vendem, como escolhem as peças e como atendem.',
   selos: ['Peças selecionadas', 'Envio para todo o Brasil', 'Atendimento pelo WhatsApp'],
+  // Entrega: CEP de onde as peças saem e a caixa padrão de uma peça (kg e cm).
+  cepOrigem: '',
+  pacotePeso: 0.5,
+  pacoteAltura: 6,
+  pacoteLargura: 25,
+  pacoteComprimento: 30,
+  freteServicos: '1,2,17', // PAC, SEDEX e Mini Envios
   faq: [
-    { p: 'Como faço para comprar?', r: 'Escolha a peça, coloque na sacola e finalize pelo WhatsApp. A gente confirma a disponibilidade e envia o pagamento.' },
-    { p: 'Quais as formas de pagamento?', r: 'Pix e cartão. Fale com a gente para combinar.' },
+    { p: 'Como faço para comprar?', r: 'Escolha a peça, coloque na sacola, calcule o frete com o seu CEP e pague no site com Pix, cartão ou boleto.' },
+    { p: 'Quais as formas de pagamento?', r: 'Pix, cartão de crédito em até 12x e boleto, pelo Mercado Pago.' },
     { p: 'Vocês enviam para todo o Brasil?', r: 'Sim. O valor e o prazo do frete dependem do seu CEP.' },
   ],
 };
@@ -65,6 +72,26 @@ export function abrirBanco(arquivo) {
       token_hash TEXT PRIMARY KEY,
       expira_em INTEGER NOT NULL
     );
+
+    -- status: aguardando (ainda não pagou), pago, enviado, cancelado
+    CREATE TABLE IF NOT EXISTS pedidos (
+      id INTEGER PRIMARY KEY,
+      codigo TEXT NOT NULL UNIQUE,
+      itens TEXT NOT NULL,
+      cliente TEXT NOT NULL,
+      subtotal REAL NOT NULL,
+      frete_nome TEXT NOT NULL,
+      frete_valor REAL NOT NULL,
+      frete_prazo INTEGER,
+      total REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'aguardando',
+      mp_link TEXT NOT NULL DEFAULT '',
+      mp_pagamento TEXT NOT NULL DEFAULT '',
+      mp_status TEXT NOT NULL DEFAULT '',
+      rastreio TEXT NOT NULL DEFAULT '',
+      criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
   db.prepare('INSERT OR IGNORE INTO config (id, dados) VALUES (1, ?)').run('{}');
   db.prepare('DELETE FROM sessoes WHERE expira_em < ?').run(Date.now());
@@ -79,6 +106,10 @@ export function lerConfig(db) {
 export function salvarConfig(db, mudancas) {
   const atual = JSON.parse(db.prepare('SELECT dados FROM config WHERE id = 1').get().dados || '{}');
   db.prepare('UPDATE config SET dados = ? WHERE id = 1').run(JSON.stringify({ ...atual, ...mudancas }));
+}
+
+export function paraPedido(linha) {
+  return { ...linha, itens: JSON.parse(linha.itens || '[]'), cliente: JSON.parse(linha.cliente || '{}') };
 }
 
 export function paraProduto(linha) {

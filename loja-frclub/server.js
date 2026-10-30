@@ -8,8 +8,9 @@ import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { abrirBanco, lerConfig, paraProduto, salvarConfig } from './lib/banco.js';
-import { normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaFavoritos, paginaInicio, paginaPeca } from './lib/paginas.js';
+import { abrirBanco, lerConfig, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
+import { normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaCheckout, paginaFavoritos, paginaInicio, paginaPeca, paginaPedido } from './lib/paginas.js';
+import { ErroServico, buscarPagamento, cotarFrete, criarCobranca, freteLigado, pagamentoLigado } from './lib/pagamento.js';
 
 const RAIZ = path.dirname(fileURLToPath(import.meta.url));
 const PUBLICO = path.join(RAIZ, 'public');
@@ -319,11 +320,216 @@ async function excluirPeca(req, res, [id]) {
   responder(res, 200, { ok: true });
 }
 
+// ---------- frete e checkout ----------
+function falhaServico(erro) {
+  if (!(erro instanceof ErroServico)) console.error(erro);
+  return new ErroHttp(502, erro instanceof ErroServico ? erro.message : 'Erro no servidor. Tente de novo.');
+}
+const soDigitos = v => String(v ?? '').replace(/\D/g, '');
+function cpfValido(cpf) {
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+  for (const n of [9, 10]) {
+    let soma = 0;
+    for (let i = 0; i < n; i++) soma += Number(cpf[i]) * (n + 1 - i);
+    if (((soma * 10) % 11) % 10 !== Number(cpf[n])) return false;
+  }
+  return true;
+}
+function lerCep(v) {
+  const cep = soDigitos(typeof v === 'string' ? v : '');
+  if (cep.length !== 8) throw new ErroHttp(400, 'Digite um CEP com 8 números.');
+  return cep;
+}
+const urlDoSite = req => (process.env.SITE_URL || process.env.RENDER_EXTERNAL_URL
+  || `${conexaoSegura(req) ? 'https' : 'http'}://${(ATRAS_DE_PROXY && req.headers['x-forwarded-host']) || req.headers.host}`).replace(/\/$/, '');
+
+// Monta os itens com o preço do banco (o preço que vem do navegador é ignorado).
+function montarItens(lista, conferirTamanho = true) {
+  if (!Array.isArray(lista) || !lista.length) throw new ErroHttp(400, 'Sua sacola está vazia.');
+  if (lista.length > 30) throw new ErroHttp(400, 'Itens demais na sacola.');
+  const itens = new Map();
+  for (const pedido of lista) {
+    const linha = db.prepare('SELECT * FROM produtos WHERE id = ? AND visivel = 1').get(Number(pedido?.id));
+    if (!linha) throw new ErroHttp(409, 'Uma das peças da sacola saiu do site. Tire ela da sacola e tente de novo.');
+    const p = paraProduto(linha);
+    if (p.esgotado) throw new ErroHttp(409, `"${p.nome}" esgotou. Tire ela da sacola para continuar.`);
+    if (!(p.preco > 0)) throw new ErroHttp(409, `"${p.nome}" está sem preço. Fale com a gente pelo WhatsApp.`);
+    const tamanho = texto(pedido.tamanho, 20, 'Tamanho');
+    if (conferirTamanho && p.tamanhos.length && !p.tamanhos.includes(tamanho)) throw new ErroHttp(400, `Escolha o tamanho de "${p.nome}" de novo.`);
+    const chave = `${p.id}:${tamanho}`;
+    const atual = itens.get(chave);
+    if (atual) {
+      if (p.peca_unica) throw new ErroHttp(409, `"${p.nome}" é peça única: deixe só uma na sacola.`);
+      atual.quantidade += 1;
+    } else {
+      itens.set(chave, { id: p.id, slug: p.slug, nome: p.nome, marca: p.marca, tamanho, preco: p.preco, quantidade: 1, foto: p.fotos[0] ? `/fotos/${p.fotos[0]}` : '', peca_unica: p.peca_unica });
+    }
+  }
+  return [...itens.values()];
+}
+const somar = itens => Math.round(itens.reduce((t, i) => t + i.preco * i.quantidade, 0) * 100) / 100;
+const contar = itens => itens.reduce((t, i) => t + i.quantidade, 0);
+
+async function calcularFrete(req, res) {
+  const cfg = lerConfig(db);
+  if (!freteLigado(cfg)) throw new ErroHttp(503, 'O cálculo de frete ainda não foi configurado.');
+  if (!dentroDoLimite(`frete:${ipDe(req)}`, 20)) throw new ErroHttp(429, 'Muitos cálculos seguidos. Espere um minuto.');
+  const corpo = await lerJson(req);
+  const cep = lerCep(corpo.cep);
+  const itens = montarItens(corpo.itens, false);
+  let opcoes;
+  try {
+    opcoes = await cotarFrete(cfg, cep, contar(itens), somar(itens));
+  } catch (erro) {
+    throw falhaServico(erro);
+  }
+  if (!opcoes.length) throw new ErroHttp(404, 'Não encontramos entrega para esse CEP. Confira o número.');
+  responder(res, 200, opcoes);
+}
+
+// Endereço pelo CEP (ViaCEP), passando pelo servidor para o site não depender de outro domínio.
+async function buscarEndereco(req, res, [cep]) {
+  if (!dentroDoLimite(`cep:${ipDe(req)}`, 30)) throw new ErroHttp(429, 'Muitas buscas seguidas. Espere um minuto.');
+  let dados;
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${lerCep(cep)}/json/`, { signal: AbortSignal.timeout(6000) });
+    dados = await r.json();
+  } catch {
+    throw new ErroHttp(502, 'Não consegui buscar o endereço. Preencha à mão.');
+  }
+  if (!dados || dados.erro) throw new ErroHttp(404, 'CEP não encontrado.');
+  responder(res, 200, { rua: dados.logradouro || '', bairro: dados.bairro || '', cidade: dados.localidade || '', uf: dados.uf || '' });
+}
+
+function lerCliente(c) {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) throw new ErroHttp(400, 'Preencha seus dados.');
+  const cliente = {
+    nome: texto(c.nome, 120, 'Nome').replace(/\s+/g, ' '),
+    email: texto(c.email, 120, 'E-mail').toLowerCase(),
+    cpf: soDigitos(texto(c.cpf, 20, 'CPF')),
+    telefone: soDigitos(texto(c.telefone, 20, 'Telefone')),
+    cep: lerCep(c.cep),
+    rua: texto(c.rua, 120, 'Rua'),
+    numero: texto(c.numero, 20, 'Número'),
+    complemento: texto(c.complemento, 80, 'Complemento'),
+    bairro: texto(c.bairro, 80, 'Bairro'),
+    cidade: texto(c.cidade, 80, 'Cidade'),
+    uf: texto(c.uf, 2, 'Estado').toUpperCase(),
+  };
+  if (!/^\S{2,}( \S+)+$/.test(cliente.nome)) throw new ErroHttp(400, 'Digite seu nome completo.');
+  if (!/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(cliente.email)) throw new ErroHttp(400, 'E-mail inválido.');
+  if (!cpfValido(cliente.cpf)) throw new ErroHttp(400, 'CPF inválido.');
+  if (cliente.telefone.length < 10 || cliente.telefone.length > 11) throw new ErroHttp(400, 'Telefone: DDD + número.');
+  if (!cliente.rua || !cliente.numero || !cliente.bairro || !cliente.cidade) throw new ErroHttp(400, 'Preencha o endereço completo.');
+  if (!/^[A-Z]{2}$/.test(cliente.uf)) throw new ErroHttp(400, 'Estado: use a sigla, como BA ou SP.');
+  return cliente;
+}
+
+async function criarPedido(req, res) {
+  const cfg = lerConfig(db);
+  if (!freteLigado(cfg) || !pagamentoLigado()) throw new ErroHttp(503, 'O pagamento pelo site ainda não foi configurado. Finalize pelo WhatsApp.');
+  if (!dentroDoLimite(`pedido:${ipDe(req)}`, 6)) throw new ErroHttp(429, 'Muitas tentativas seguidas. Espere um minuto.');
+  const corpo = await lerJson(req);
+  const itens = montarItens(corpo.itens);
+  const cliente = lerCliente(corpo.cliente);
+  const subtotal = somar(itens);
+  // O frete é recalculado aqui: o valor escolhido no navegador não vale.
+  let opcoes;
+  try {
+    opcoes = await cotarFrete(cfg, cliente.cep, contar(itens), subtotal);
+  } catch (erro) {
+    throw falhaServico(erro);
+  }
+  const frete = opcoes.find(o => o.id === Number(corpo.frete));
+  if (!frete) throw new ErroHttp(409, 'Escolha a forma de entrega de novo.');
+  const total = Math.round((subtotal + frete.preco) * 100) / 100;
+  const codigo = crypto.randomBytes(9).toString('base64url');
+  const { lastInsertRowid } = db.prepare(`INSERT INTO pedidos (codigo, itens, cliente, subtotal, frete_nome, frete_valor, frete_prazo, total)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(codigo, JSON.stringify(itens), JSON.stringify(cliente), subtotal,
+    `${frete.empresa ? `${frete.empresa} ` : ''}${frete.nome}`.trim(), frete.preco, frete.prazo, total);
+  let cobranca;
+  try {
+    cobranca = await criarCobranca({ pedido: { codigo }, itens, cliente, frete, baseUrl: urlDoSite(req), nomeLoja: cfg.nomeLoja });
+  } catch (erro) {
+    db.prepare('DELETE FROM pedidos WHERE id = ?').run(Number(lastInsertRowid));
+    throw falhaServico(erro);
+  }
+  db.prepare('UPDATE pedidos SET mp_link = ? WHERE id = ?').run(cobranca.link, Number(lastInsertRowid));
+  responder(res, 201, { codigo, link: cobranca.link });
+}
+
+// Atualiza o pedido com o que o Mercado Pago diz sobre o pagamento.
+function aplicarPagamento(pagamento) {
+  const linha = db.prepare('SELECT * FROM pedidos WHERE codigo = ?').get(pagamento.referencia);
+  if (!linha) return null;
+  const pedido = paraPedido(linha);
+  let status = pedido.status;
+  if (pagamento.status === 'approved' && pagamento.valor >= pedido.total - 0.01) {
+    if (status === 'aguardando' || status === 'cancelado') status = 'pago';
+  } else if (['refunded', 'charged_back'].includes(pagamento.status)) status = 'cancelado';
+  db.prepare(`UPDATE pedidos SET status = ?, mp_pagamento = ?, mp_status = ?, atualizado_em = datetime('now') WHERE id = ?`)
+    .run(status, pagamento.id, pagamento.status, pedido.id);
+  // Peça única vendida sai da loja na hora.
+  if (status === 'pago' && pedido.status !== 'pago') {
+    for (const i of pedido.itens) if (i.peca_unica) db.prepare(`UPDATE produtos SET esgotado = 1, atualizado_em = datetime('now') WHERE id = ?`).run(i.id);
+  }
+  return paraPedido(db.prepare('SELECT * FROM pedidos WHERE id = ?').get(pedido.id));
+}
+
+// Aviso automático do Mercado Pago. Só usamos o número do pagamento e conferimos tudo direto na API deles.
+async function avisoMercadoPago(req, res, _p, url) {
+  if (!pagamentoLigado()) return responder(res, 200, { ok: true });
+  const corpo = await lerJson(req).catch(() => ({}));
+  const tipo = url.searchParams.get('type') || url.searchParams.get('topic') || corpo.type || corpo.topic;
+  const id = url.searchParams.get('data.id') || corpo.data?.id || url.searchParams.get('id');
+  if (tipo !== 'payment' || !/^\d{1,20}$/.test(String(id || ''))) return responder(res, 200, { ok: true });
+  try {
+    aplicarPagamento(await buscarPagamento(String(id)));
+  } catch (erro) {
+    console.error('Aviso do Mercado Pago:', erro.message);
+    throw new ErroHttp(502, 'Tente de novo.'); // o Mercado Pago reenvia mais tarde
+  }
+  responder(res, 200, { ok: true });
+}
+
+async function verPedido(req, res, [codigo], url) {
+  const linha = db.prepare('SELECT * FROM pedidos WHERE codigo = ?').get(codigo);
+  if (!linha) throw new ErroHttp(404, 'Pedido não encontrado.');
+  let pedido = paraPedido(linha);
+  // Na volta do Mercado Pago vem o número do pagamento: confere na hora, sem esperar o aviso.
+  const pagamentoId = url.searchParams.get('payment_id') || url.searchParams.get('collection_id');
+  if (pagamentoLigado() && /^\d{1,20}$/.test(String(pagamentoId || '')) && (pedido.mp_pagamento !== pagamentoId || pedido.status === 'aguardando')) {
+    try {
+      const pagamento = await buscarPagamento(pagamentoId);
+      if (pagamento.referencia === pedido.codigo) pedido = aplicarPagamento(pagamento) ?? pedido;
+    } catch (erro) {
+      console.error('Conferindo pagamento:', erro.message);
+    }
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  html(res, 200, paginaPedido(lerConfig(db), listarVisiveis(), pedido));
+}
+
+const STATUS_PEDIDO = ['aguardando', 'pago', 'enviado', 'cancelado'];
+async function editarPedido(req, res, [id]) {
+  const linha = db.prepare('SELECT * FROM pedidos WHERE id = ?').get(Number(id));
+  if (!linha) throw new ErroHttp(404, 'Pedido não encontrado.');
+  const corpo = await lerJson(req);
+  const status = corpo.status === undefined ? linha.status : String(corpo.status);
+  if (!STATUS_PEDIDO.includes(status)) throw new ErroHttp(400, 'Status inválido.');
+  const rastreio = corpo.rastreio === undefined ? linha.rastreio : texto(corpo.rastreio, 60, 'Rastreio');
+  db.prepare(`UPDATE pedidos SET status = ?, rastreio = ?, atualizado_em = datetime('now') WHERE id = ?`).run(status, rastreio, linha.id);
+  responder(res, 200, paraPedido(db.prepare('SELECT * FROM pedidos WHERE id = ?').get(linha.id)));
+}
+
 // ---------- configuração do site ----------
 const CAMPOS_TEXTO = {
   nomeLoja: 40, barraTopo: 120, linkTopoTexto: 40, fraseHero: 80, mensagemWhatsapp: 300, tituloPecas: 60,
   sobreTitulo: 80, sobreTexto: 4000, email: 120, cnpj: 30, cidade: 80,
 };
+// Medidas da caixa padrão: [mínimo, máximo] em kg ou cm.
+const CAMPOS_PACOTE = { pacotePeso: [0.01, 30], pacoteAltura: [1, 100], pacoteLargura: [8, 100], pacoteComprimento: [13, 100] };
+const configPainel = () => ({ ...lerConfig(db), integracoes: { frete: Boolean(process.env.SUPERFRETE_TOKEN), pagamento: pagamentoLigado() } });
 async function salvarAparencia(req, res) {
   const corpo = await lerJson(req, MAX_CORPO);
   if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) throw new ErroHttp(400, 'Dados inválidos.');
@@ -344,6 +550,22 @@ async function salvarAparencia(req, res) {
     if (rede in corpo) mudancas[rede] = texto(corpo[rede], 60, rede).replace(/^@/, '').replace(/[^\w.]/g, '');
   }
   for (const chave of ['mostrarLogoHero', 'heroPretoBranco']) if (chave in corpo) mudancas[chave] = corpo[chave] === true;
+  if ('cepOrigem' in corpo) {
+    const cep = soDigitos(texto(corpo.cepOrigem, 12, 'CEP de origem'));
+    if (cep && cep.length !== 8) throw new ErroHttp(400, 'CEP de origem: use os 8 números.');
+    mudancas.cepOrigem = cep;
+  }
+  for (const [campo, [min, max]] of Object.entries(CAMPOS_PACOTE)) {
+    if (!(campo in corpo)) continue;
+    const n = valor(corpo[campo], 'Medida da caixa');
+    if (n === null || n < min || n > max) throw new ErroHttp(400, `Medida da caixa fora do limite (entre ${min} e ${max}).`);
+    mudancas[campo] = n;
+  }
+  if ('freteServicos' in corpo) {
+    const servicos = (Array.isArray(corpo.freteServicos) ? corpo.freteServicos : []).map(Number).filter(n => [1, 2, 3, 17, 31, 33].includes(n));
+    if (!servicos.length) throw new ErroHttp(400, 'Escolha pelo menos uma forma de envio.');
+    mudancas.freteServicos = [...new Set(servicos)].join(',');
+  }
   if ('email' in corpo && mudancas.email && !/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(mudancas.email)) throw new ErroHttp(400, 'E-mail inválido.');
   if ('selos' in corpo) mudancas.selos = (Array.isArray(corpo.selos) ? corpo.selos : []).slice(0, 4).map(s => texto(s, 80, 'Selo'));
   if ('faq' in corpo) {
@@ -370,7 +592,7 @@ async function salvarAparencia(req, res) {
     throw erro;
   }
   await apagarFotos(trocadas);
-  responder(res, 200, lerConfig(db));
+  responder(res, 200, configPainel());
 }
 
 // ---------- páginas ----------
@@ -414,10 +636,16 @@ const ROTAS = [
   ['GET', /^\/pecas\/?$/, catalogo],
   ['GET', /^\/peca\/([a-z0-9-]+)$/, peca],
   ['GET', /^\/favoritos\/?$/, (req, res) => html(res, 200, paginaFavoritos(lerConfig(db), listarVisiveis()))],
+  ['GET', /^\/checkout\/?$/, (req, res) => { const cfg = lerConfig(db); html(res, 200, paginaCheckout(cfg, listarVisiveis(), freteLigado(cfg) && pagamentoLigado())); }],
+  ['GET', /^\/pedido\/([A-Za-z0-9_-]{12})$/, verPedido],
+  ['POST', /^\/api\/frete$/, calcularFrete],
+  ['GET', /^\/api\/cep\/(\d{5}-?\d{3})$/, buscarEndereco],
+  ['POST', /^\/api\/pedidos$/, criarPedido],
+  ['POST', /^\/api\/mercadopago\/aviso$/, avisoMercadoPago],
   ['GET', /^\/admin\/?$/, (req, res) => { res.setHeader('Cache-Control', 'no-store'); html(res, 200, paginaAdmin()); }],
   ['GET', /^\/fotos\/([^/]+)$/, servirFoto],
   ['GET', /^\/static\/(.+)$/, estatico],
-  ['GET', /^\/robots\.txt$/, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('User-agent: *\nDisallow: /admin\nDisallow: /api/\n'); }],
+  ['GET', /^\/robots\.txt$/, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /checkout\nDisallow: /pedido/\n'); }],
   ['GET', /^\/api\/sessao$/, (req, res) => responder(res, 200, { logado: logado(req), painelLigado: !motivoPainelDesligado(), motivo: motivoPainelDesligado() })],
   ['POST', /^\/api\/entrar$/, entrar],
   ['POST', /^\/api\/sair$/, sair],
@@ -425,7 +653,9 @@ const ROTAS = [
   ['POST', /^\/api\/admin\/pecas$/, exigirLogin(criarPeca)],
   ['PATCH', /^\/api\/admin\/pecas\/(\d+)$/, exigirLogin(editarPeca)],
   ['DELETE', /^\/api\/admin\/pecas\/(\d+)$/, exigirLogin(excluirPeca)],
-  ['GET', /^\/api\/admin\/aparencia$/, exigirLogin((req, res) => responder(res, 200, lerConfig(db)))],
+  ['GET', /^\/api\/admin\/pedidos$/, exigirLogin((req, res) => responder(res, 200, db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 300').all().map(paraPedido)))],
+  ['PATCH', /^\/api\/admin\/pedidos\/(\d+)$/, exigirLogin(editarPedido)],
+  ['GET', /^\/api\/admin\/aparencia$/, exigirLogin((req, res) => responder(res, 200, configPainel()))],
   ['PATCH', /^\/api\/admin\/aparencia$/, exigirLogin(salvarAparencia)],
 ];
 
@@ -475,7 +705,8 @@ const servidor = http.createServer(async (req, res) => {
       if (url.pathname.startsWith('/api/')) throw new ErroHttp(404, 'Rota não encontrada.');
       return html(res, 404, pagina404(lerConfig(db), listarVisiveis()));
     }
-    if (escrita) conferirOrigem(req);
+    // O aviso do Mercado Pago vem de fora do site; ele não muda nada sem conferir o pagamento na API deles.
+    if (escrita && url.pathname !== '/api/mercadopago/aviso') conferirOrigem(req);
     if (url.pathname.startsWith('/api/admin/')) res.setHeader('Cache-Control', 'no-store');
     let params;
     try {
