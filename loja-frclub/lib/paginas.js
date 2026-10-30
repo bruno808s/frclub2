@@ -12,7 +12,6 @@ export const ICONE = {
   instagram: svg('<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".6" fill="currentColor"/>'),
   whatsapp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.04 2a9.9 9.9 0 0 0-8.5 15l-1.5 5 5.2-1.4A9.9 9.9 0 1 0 12.04 2Zm0 18.1a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3.1.8.8-3-.2-.3a8.2 8.2 0 1 1 7 3.8Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4a.5.5 0 0 0 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.1 5.1 0 0 0 1.1 2.7 11.6 11.6 0 0 0 4.4 3.9c1.6.7 2.3.8 3.1.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .1-1.2c0-.2-.2-.2-.5-.4Z"/></svg>',
   coracao: svg('<path d="M12 20s-7.5-4.6-9.2-9.3C1.6 7.3 3.8 4 7.2 4c2 0 3.6 1.2 4.8 3 1.2-1.8 2.8-3 4.8-3 3.4 0 5.6 3.3 4.4 6.7C19.5 15.4 12 20 12 20Z"/>'),
-  usuario: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.3-4 4.4-6 8-6s6.7 2 8 6"/>'),
   sacola: svg('<path d="M5 8h14l-1 13H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>'),
   seta: svg('<path d="m6 9 6 6 6-6"/>'),
   menu: svg('<path d="M3 7h18M3 12h18M3 17h18"/>'),
@@ -88,7 +87,6 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
     </nav>
     <div class="acoes">
       <a class="icone" href="/favoritos" aria-label="Favoritos">${ICONE.coracao}<span class="contador" data-contador-favoritos hidden></span></a>
-      <a class="icone" href="/conta" aria-label="Minha conta">${ICONE.usuario}</a>
       <button class="icone" type="button" data-abrir-sacola aria-label="Sacola">${ICONE.sacola}<span class="contador" data-contador-sacola hidden></span></button>
     </div>
   </header>
@@ -108,7 +106,6 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
           <li><a href="/depoimentos">Depoimentos</a></li>
           <li><a href="/#sobre">Sobre</a></li>
           <li><a href="/#duvidas">Dúvidas</a></li>
-          <li><a href="/conta">Minha conta</a></li>
         </ul>
       </div>
       <div>
@@ -340,11 +337,11 @@ export function paginaPeca(cfg, produtos, p) {
 
 // ---------- checkout (a sacola vem do aparelho; o servidor confere preço e frete) ----------
 const campo = (nome, rotulo, extra = '', classe = '') => `<label class="campo ${classe}"><span>${rotulo}</span><input name="${nome}" ${extra}><small class="campo-erro" hidden></small></label>`;
-export function paginaCheckout(cfg, produtos, ligado, conta) {
+export function paginaCheckout(cfg, produtos, ligado) {
   const corpo = ligado ? `
   <section class="secao checkout">
-    <div class="catalogo-cabeca"><h1>Finalizar compra</h1>${conta ? '' : '<p class="nota">Já tem conta? <a class="sublinhado" href="/conta?voltar=/checkout">Entrar</a> para preencher seus dados.</p>'}</div>
-    <form class="checkout-grade" data-checkout ${conta ? `data-conta="${esc(JSON.stringify(conta))}"` : ''} novalidate>
+    <div class="catalogo-cabeca"><h1>Finalizar compra</h1></div>
+    <form class="checkout-grade" data-checkout novalidate>
       <div class="checkout-dados">
         <fieldset>
           <legend>Seus dados</legend>
@@ -418,120 +415,6 @@ export function paginaPedido(cfg, produtos, pedido) {
     ${cfg.whatsapp ? `<a class="botao botao-linha" href="${esc(linkWhats(cfg, `Olá! Sobre o meu pedido ${pedido.codigo}.`))}" target="_blank" rel="noopener">Falar no WhatsApp</a>` : ''}
   </section>`;
   return moldura(cfg, produtos, { titulo, corpo });
-}
-
-// ---------- conta do cliente ----------
-const NOME_STATUS_CURTO = { aguardando: 'Aguardando pagamento', pago: 'Pago · em separação', enviado: 'Enviado', cancelado: 'Cancelado' };
-export function paginaConta(cfg, produtos, { cliente, pedidos, semSenhaLigado }) {
-  const isca = '<label class="isca" aria-hidden="true">Site <input name="site" tabindex="-1" autocomplete="off"></label>';
-  const lateral = `
-    <aside class="conta-lateral">
-      ${ICONE.escudo}
-      <h2>Seus dados protegidos</h2>
-      <p>A senha é guardada criptografada: nem a loja consegue ler. O pagamento acontece no ambiente do Mercado Pago e os dados do seu cartão não passam pela loja.</p>
-    </aside>`;
-  if (!cliente) {
-    const corpo = `
-  <section class="secao conta">
-    <div class="conta-principal">
-      <p class="peca-marca">Área segura</p>
-      <h1>Sua conta ${esc(cfg.nomeLoja)}</h1>
-      <p class="conta-sub">Entre para acompanhar seus pedidos e comprar mais rápido${semSenhaLigado ? ', com e-mail e senha ou por um link no seu e-mail' : ''}.</p>
-      <div class="conta-abas" role="tablist">
-        <button type="button" role="tab" data-aba-conta="entrar" aria-selected="true">Entrar</button>
-        <button type="button" role="tab" data-aba-conta="criar" aria-selected="false">Criar conta</button>
-        ${semSenhaLigado ? '<button type="button" role="tab" data-aba-conta="link" aria-selected="false">Sem senha</button>' : ''}
-      </div>
-      <form class="conta-form" data-form-conta="entrar" novalidate>
-        ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required placeholder="voce@email.com"')}
-        ${campo('senha', 'Senha', 'type="password" autocomplete="current-password" maxlength="200" required')}
-        ${isca}
-        <p class="form-erro" role="alert" hidden></p>
-        <button class="botao" type="submit">Entrar</button>
-        ${semSenhaLigado ? '<button class="link-simples" type="button" data-ir-aba="link">Esqueci minha senha</button>' : ''}
-      </form>
-      <form class="conta-form" data-form-conta="criar" novalidate hidden>
-        ${campo('nome', 'Nome completo', 'autocomplete="name" maxlength="120" required')}
-        ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required placeholder="voce@email.com"')}
-        ${campo('senha', 'Senha (mínimo 8 caracteres)', 'type="password" autocomplete="new-password" maxlength="200" minlength="8" required')}
-        ${isca}
-        <p class="form-erro" role="alert" hidden></p>
-        <button class="botao" type="submit">Criar conta</button>
-      </form>
-      ${semSenhaLigado ? `
-      <form class="conta-form" data-form-conta="link" novalidate hidden>
-        <p class="nota">Mandamos um link para o seu e-mail. É só clicar para entrar, sem senha. Serve também para quem esqueceu a senha.</p>
-        ${campo('email', 'E-mail', 'type="email" autocomplete="email" maxlength="120" required placeholder="voce@email.com"')}
-        ${isca}
-        <p class="form-erro" role="alert" hidden></p>
-        <p class="form-ok" role="status" hidden></p>
-        <button class="botao" type="submit">Receber link</button>
-      </form>` : ''}
-    </div>
-    ${lateral}
-  </section>`;
-    return moldura(cfg, produtos, { titulo: 'Minha conta', corpo });
-  }
-  const d = cliente.dados;
-  const corpo = `
-  <section class="secao conta logada">
-    <div class="conta-principal">
-      <p class="peca-marca">Minha conta</p>
-      <h1>${cliente.nome ? `Olá, ${esc(cliente.nome.split(' ')[0])}` : 'Olá!'}</h1>
-      <p class="conta-sub">${esc(cliente.email)} · <button class="link-simples" type="button" data-sair-conta>Sair</button></p>
-
-      <h2 class="conta-titulo">Meus pedidos</h2>
-      ${pedidos.length ? `<ul class="conta-pedidos">${pedidos.map(p => `
-        <li>
-          <a href="/pedido/${esc(p.codigo)}">
-            <span><b>Pedido ${esc(p.codigo)}</b><small>${esc(new Date(`${p.criado_em.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }))} · ${p.itens.length} ${p.itens.length === 1 ? 'peça' : 'peças'}</small></span>
-            <span class="status-pedido status-${esc(p.status)}">${esc(NOME_STATUS_CURTO[p.status] ?? p.status)}</span>
-            <b>${reais(p.total)}</b>
-          </a>
-        </li>`).join('')}</ul>` : '<p class="vazio">Você ainda não fez nenhum pedido com esta conta. <a href="/pecas">Ver as peças</a></p>'}
-
-      <h2 class="conta-titulo">Meus dados</h2>
-      <form class="conta-form conta-dados" data-form-conta="dados" novalidate>
-        ${campo('nome', 'Nome completo', `autocomplete="name" maxlength="120" required value="${esc(cliente.nome)}"`, 'largo')}
-        ${campo('telefone', 'Celular com DDD', `type="tel" autocomplete="tel" maxlength="20" value="${esc(d.telefone)}" data-telefone`)}
-        ${campo('cep', 'CEP', `inputmode="numeric" autocomplete="postal-code" maxlength="9" placeholder="00000-000" value="${esc(d.cep)}" data-cep`)}
-        ${campo('rua', 'Rua', `autocomplete="address-line1" maxlength="120" value="${esc(d.rua)}"`, 'largo')}
-        ${campo('numero', 'Número', `maxlength="20" value="${esc(d.numero)}"`)}
-        ${campo('complemento', 'Complemento', `maxlength="80" value="${esc(d.complemento)}"`)}
-        ${campo('bairro', 'Bairro', `maxlength="80" value="${esc(d.bairro)}"`)}
-        ${campo('cidade', 'Cidade', `maxlength="80" value="${esc(d.cidade)}"`)}
-        ${campo('uf', 'Estado (sigla)', `maxlength="2" value="${esc(d.uf)}"`)}
-        <p class="form-erro largo" role="alert" hidden></p>
-        <button class="botao" type="submit">Salvar dados</button>
-      </form>
-
-      <h2 class="conta-titulo">${cliente.temSenha ? 'Trocar senha' : 'Criar uma senha'}</h2>
-      <form class="conta-form" data-form-conta="senha" novalidate>
-        ${cliente.temSenha && cliente.via !== 'link' ? campo('senhaAtual', 'Senha atual', 'type="password" autocomplete="current-password" maxlength="200" required') : ''}
-        ${campo('senhaNova', 'Nova senha (mínimo 8 caracteres)', 'type="password" autocomplete="new-password" maxlength="200" minlength="8" required')}
-        <p class="form-erro" role="alert" hidden></p>
-        <button class="botao botao-linha" type="submit">Salvar senha</button>
-      </form>
-    </div>
-    ${lateral}
-  </section>`;
-  return moldura(cfg, produtos, { titulo: 'Minha conta', corpo });
-}
-
-export function paginaLinkEntrada(cfg, produtos, token) {
-  const corpo = `
-  <section class="secao conta">
-    <div class="conta-principal">
-      <p class="peca-marca">Área segura</p>
-      <h1>Entrar na sua conta</h1>
-      <p class="conta-sub">Clique no botão para entrar. O link só pode ser usado uma vez.</p>
-      <form class="conta-form" data-usar-link="${esc(token)}" novalidate>
-        <p class="form-erro" role="alert" hidden></p>
-        <button class="botao" type="submit">Entrar</button>
-      </form>
-    </div>
-  </section>`;
-  return moldura(cfg, produtos, { titulo: 'Entrar', corpo });
 }
 
 export function paginaDepoimentos(cfg, produtos, depoimentos) {

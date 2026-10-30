@@ -153,18 +153,6 @@
     if (!r.ok) throw new Error(resposta?.erro || 'Algo deu errado. Tente de novo.');
     return resposta;
   }
-  async function enviar(metodo, caminho, corpo) {
-    if (metodo === 'POST') return postar(caminho, corpo);
-    let r;
-    try {
-      r = await fetch(caminho, { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
-    } catch {
-      throw new Error('Sem conexão. Confira a internet e tente de novo.');
-    }
-    const resposta = await r.json().catch(() => null);
-    if (!r.ok) throw new Error(resposta?.erro || 'Algo deu errado. Tente de novo.');
-    return resposta;
-  }
 
   // ---------- conferência dos campos (o servidor confere de novo) ----------
   function cpfValido(cpf) {
@@ -254,10 +242,8 @@
     const subtotal = sacola.reduce((t, p) => t + (p.preco || 0), 0);
     let opcoes = [];
     let cepCotado = '';
-    // Com conta, os dados vêm dela; sem conta, do que ficou guardado neste aparelho.
-    let conta = null;
-    try { conta = JSON.parse(checkout.dataset.conta || 'null'); } catch {}
-    const salvo = conta ?? ler('frclub-cliente', {});
+    // Preenche com o que ficou guardado neste aparelho na última compra.
+    const salvo = ler('frclub-cliente', {});
     for (const [k, v] of Object.entries(salvo)) if (checkout[k] && typeof v === 'string' && v) { checkout[k].value = v; checkout[k].dispatchEvent(new Event('input')); }
 
     if (!sacola.length) {
@@ -326,58 +312,6 @@
       }
     });
   }
-
-  // ---------- conta ----------
-  const voltarPara = () => { const v = new URLSearchParams(location.search).get('voltar') || ''; return /^\/(?!\/)/.test(v) ? v : '/conta'; };
-  function mostrarAba(nome) {
-    $$('[data-aba-conta]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.abaConta === nome)));
-    $$('[data-form-conta]').forEach(f => { f.hidden = f.dataset.formConta !== nome; });
-    $(`[data-form-conta="${nome}"] input:not([name="site"])`)?.focus();
-  }
-  $$('[data-aba-conta]').forEach(b => b.addEventListener('click', () => mostrarAba(b.dataset.abaConta)));
-  $$('[data-ir-aba]').forEach(b => b.addEventListener('click', () => {
-    const email = $('[data-form-conta="entrar"]').email.value;
-    mostrarAba(b.dataset.irAba);
-    if (email) $('[data-form-conta="link"]').email.value = email;
-  }));
-  // Envia um formulário com o botão travado e mostra o erro dentro dele.
-  function aoEnviar(form, acao) {
-    form.addEventListener('submit', async e => {
-      e.preventDefault();
-      const erro = $('.form-erro', form);
-      const ok = $('.form-ok', form);
-      erro.hidden = true;
-      if (ok) ok.hidden = true;
-      if (!conferirForm(form)) return;
-      const botao = $('button[type="submit"]', form);
-      botao.disabled = true;
-      try {
-        const aviso = await acao(Object.fromEntries(new FormData(form)));
-        if (aviso && ok) { ok.textContent = aviso; ok.hidden = false; }
-      } catch (falha) {
-        erro.textContent = falha.message;
-        erro.hidden = false;
-      } finally {
-        botao.disabled = false;
-      }
-    });
-  }
-  const formConta = nome => $(`[data-form-conta="${nome}"]`);
-  if (formConta('entrar')) aoEnviar(formConta('entrar'), async d => { await postar('/api/conta/entrar', d); location.href = voltarPara(); });
-  if (formConta('criar')) aoEnviar(formConta('criar'), async d => { await postar('/api/conta/criar', d); location.href = voltarPara(); });
-  if (formConta('link')) aoEnviar(formConta('link'), async d => {
-    await postar('/api/conta/link', d);
-    return `Pronto! Se o e-mail estiver certo, o link chega em instantes. Confira também o spam.`;
-  });
-  if (formConta('dados')) {
-    const f = formConta('dados');
-    f.cep.addEventListener('input', () => { const cep = f.cep.value.replace(/\D/g, ''); if (cep.length === 8) preencherEndereco(f, cep); });
-    aoEnviar(f, async d => { await enviar('PATCH', '/api/conta', d); location.reload(); });
-  }
-  if (formConta('senha')) aoEnviar(formConta('senha'), async d => { await enviar('PATCH', '/api/conta', d); location.reload(); });
-  $('[data-sair-conta]')?.addEventListener('click', async () => { await postar('/api/conta/sair', {}).catch(() => {}); location.href = '/'; });
-  const formLink = $('[data-usar-link]');
-  if (formLink) aoEnviar(formLink, async () => { await postar('/api/conta/link/entrar', { token: formLink.dataset.usarLink }); location.replace('/conta'); });
 
   // ---------- página do pedido ----------
   const pedido = $('.pedido');

@@ -105,15 +105,3 @@ export function emailPedidoEnviado(cfg, pedido, base) {
     texto: `Seu pedido ${pedido.codigo} foi enviado.${pedido.rastreio ? ` Rastreio: ${pedido.rastreio}.` : ''} ${link}`,
   };
 }
-
-export function emailLinkEntrada(cfg, email, link) {
-  return {
-    para: email,
-    assunto: `Seu link para entrar · ${cfg.nomeLoja}`,
-    html: moldura(cfg, 'Entrar na sua conta', `
-      ${paragrafo('Clique no botão para entrar na sua conta. O link vale por 30 minutos e só pode ser usado uma vez.')}
-      ${botao(link, 'Entrar')}
-      ${paragrafo('Se não foi você que pediu, pode ignorar este e-mail.')}`),
-    texto: `Entre na sua conta: ${link} (vale por 30 minutos). Se não foi você, ignore este e-mail.`,
-  };
-}

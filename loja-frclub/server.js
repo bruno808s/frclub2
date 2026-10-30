@@ -9,14 +9,13 @@ import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
-import { abrirBanco, lerConfig, paraCliente, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
+import { abrirBanco, lerConfig, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
 import {
-  normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaCheckout, paginaConta, paginaDepoimentos, paginaFavoritos, paginaInicio,
-  paginaLinkEntrada, paginaPeca, paginaPedido,
+  normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaCheckout, paginaDepoimentos, paginaFavoritos, paginaInicio,
+  paginaPeca, paginaPedido,
 } from './lib/paginas.js';
 import { ErroServico, buscarPagamento, cotarFrete, criarCobranca, freteLigado, pagamentoLigado } from './lib/pagamento.js';
-import { emailLigado, emailLinkEntrada, emailNovaVenda, emailPedidoEnviado, emailPedidoPago, enviarDepois, enviarEmail } from './lib/email.js';
+import { emailLigado, emailNovaVenda, emailPedidoEnviado, emailPedidoPago, enviarDepois } from './lib/email.js';
 
 const RAIZ = path.dirname(fileURLToPath(import.meta.url));
 const PUBLICO = path.join(RAIZ, 'public');
@@ -446,7 +445,6 @@ async function criarPedido(req, res) {
   const corpo = await lerJson(req);
   const itens = montarItens(corpo.itens);
   const cliente = lerCliente(corpo.cliente);
-  const conta = sessaoCliente(req);
   const subtotal = somar(itens);
   // O frete é recalculado aqui: o valor escolhido no navegador não vale.
   let opcoes;
@@ -459,9 +457,9 @@ async function criarPedido(req, res) {
   if (!frete) throw new ErroHttp(409, 'Escolha a forma de entrega de novo.');
   const total = Math.round((subtotal + frete.preco) * 100) / 100;
   const codigo = crypto.randomBytes(9).toString('base64url');
-  const { lastInsertRowid } = db.prepare(`INSERT INTO pedidos (codigo, itens, cliente, subtotal, frete_nome, frete_valor, frete_prazo, total, cliente_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(codigo, JSON.stringify(itens), JSON.stringify(cliente), subtotal,
-    `${frete.empresa ? `${frete.empresa} ` : ''}${frete.nome}`.trim(), frete.preco, frete.prazo, total, conta?.id ?? null);
+  const { lastInsertRowid } = db.prepare(`INSERT INTO pedidos (codigo, itens, cliente, subtotal, frete_nome, frete_valor, frete_prazo, total)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(codigo, JSON.stringify(itens), JSON.stringify(cliente), subtotal,
+    `${frete.empresa ? `${frete.empresa} ` : ''}${frete.nome}`.trim(), frete.preco, frete.prazo, total);
   let cobranca;
   try {
     cobranca = await criarCobranca({ pedido: { codigo }, itens, cliente, frete, baseUrl: urlDoSite(req), nomeLoja: cfg.nomeLoja });
@@ -470,11 +468,6 @@ async function criarPedido(req, res) {
     throw falhaServico(erro);
   }
   db.prepare('UPDATE pedidos SET mp_link = ? WHERE id = ?').run(cobranca.link, Number(lastInsertRowid));
-  // A conta guarda o endereço da última compra para preencher sozinho na próxima (o CPF não fica guardado).
-  if (conta) {
-    const { nome, email, cpf, ...endereco } = cliente;
-    db.prepare(`UPDATE clientes SET dados = ?, nome = CASE WHEN nome = '' THEN ? ELSE nome END WHERE id = ?`).run(JSON.stringify(endereco), nome, conta.id);
-  }
   responder(res, 201, { codigo, link: cobranca.link });
 }
 
@@ -550,170 +543,6 @@ async function editarPedido(req, res, [id]) {
   }
   responder(res, 200, { ...pedido, emailEnviado: status === 'enviado' && linha.status !== 'enviado' && emailLigado() });
 }
-
-// ---------- contas de clientes ----------
-const COOKIE_CLIENTE = 'loja_cliente';
-const COOKIE_CLIENTE_SEGURO = '__Host-loja_cliente';
-const SESSAO_CLIENTE_MS = 30 * 24 * 60 * 60 * 1000;
-const LINK_MS = 30 * 60 * 1000;
-const QUINZE_MIN = 15 * 60 * 1000;
-const scrypt = promisify(crypto.scrypt);
-const nomeCookieCliente = req => (conexaoSegura(req) ? COOKIE_CLIENTE_SEGURO : COOKIE_CLIENTE);
-const hashCliente = token => sha256(`cliente:${token}`);
-// Lax (e não Strict): quem chega pelo link do e-mail já entra logado. O que muda dados passa pelo conferirOrigem.
-function cookieCliente(req, valor, segundos) {
-  return `${nomeCookieCliente(req)}=${valor}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${segundos}${conexaoSegura(req) ? '; Secure' : ''}`;
-}
-function tokenCliente(req) {
-  const t = lerCookies(req)[nomeCookieCliente(req)];
-  return typeof t === 'string' && /^[A-Za-z0-9_-]{43}$/.test(t) ? t : null;
-}
-function sessaoCliente(req) {
-  const token = tokenCliente(req);
-  if (!token) return null;
-  const linha = db.prepare(`SELECT c.*, s.via FROM sessoes_clientes s JOIN clientes c ON c.id = s.cliente_id
-    WHERE s.token_hash = ? AND s.expira_em > ?`).get(hashCliente(token), Date.now());
-  return linha ? paraCliente(linha) : null;
-}
-function abrirSessaoCliente(req, res, clienteId, via) {
-  const token = crypto.randomBytes(32).toString('base64url');
-  db.prepare('INSERT INTO sessoes_clientes (token_hash, cliente_id, via, expira_em) VALUES (?, ?, ?, ?)').run(hashCliente(token), clienteId, via, Date.now() + SESSAO_CLIENTE_MS);
-  res.setHeader('Set-Cookie', cookieCliente(req, token, SESSAO_CLIENTE_MS / 1000));
-}
-function exigirCliente(req) {
-  const cliente = sessaoCliente(req);
-  if (!cliente) throw new ErroHttp(401, 'Entre na sua conta para continuar.');
-  return cliente;
-}
-
-// Senha guardada como scrypt$sal$hash: nem quem abrir o banco consegue ler a senha.
-async function gerarHashSenha(senha) {
-  const sal = crypto.randomBytes(16);
-  return `scrypt$${sal.toString('hex')}$${(await scrypt(senha, sal, 64)).toString('hex')}`;
-}
-async function senhaDoClienteConfere(senha, guardado) {
-  const [, sal = '', hash = ''] = String(guardado || '').split('$');
-  const calculado = await scrypt(String(senha), Buffer.from(sal || '00', 'hex'), 64); // calcula mesmo sem conta: o tempo não entrega nada
-  const esperado = Buffer.from(hash, 'hex');
-  return esperado.length === 64 && crypto.timingSafeEqual(calculado, esperado);
-}
-function lerSenhaNova(v) {
-  if (typeof v !== 'string' || v.length < 8) throw new ErroHttp(400, 'A senha precisa ter pelo menos 8 caracteres.');
-  if (v.length > 200) throw new ErroHttp(400, 'Senha longa demais.');
-  return v;
-}
-const ehRobo = corpo => typeof corpo?.site === 'string' && corpo.site !== ''; // campo invisível: só robô preenche
-function limiteConta(req) {
-  if (!dentroDoLimite(`conta:${ipDe(req)}`, 10, QUINZE_MIN)) throw new ErroHttp(429, 'Muitas tentativas. Espere 15 minutos.');
-}
-
-async function criarConta(req, res) {
-  limiteConta(req);
-  const corpo = await lerJson(req);
-  if (ehRobo(corpo)) throw new ErroHttp(400, 'Não foi possível criar a conta.');
-  const nome = texto(corpo.nome, 120, 'Nome').replace(/\s+/g, ' ');
-  const email = lerEmail(corpo.email);
-  if (!nomeValido(nome)) throw new ErroHttp(400, 'Digite seu nome completo (nome e sobrenome).');
-  const senha = lerSenhaNova(corpo.senha);
-  if (db.prepare('SELECT 1 FROM clientes WHERE email = ?').get(email)) throw new ErroHttp(409, 'Já existe uma conta com esse e-mail. Entre com a senha ou use "Sem senha".');
-  const { lastInsertRowid } = db.prepare('INSERT INTO clientes (email, nome, senha) VALUES (?, ?, ?)').run(email, nome, await gerarHashSenha(senha));
-  abrirSessaoCliente(req, res, Number(lastInsertRowid), 'senha');
-  responder(res, 201, { ok: true });
-}
-
-async function entrarConta(req, res) {
-  limiteConta(req);
-  const corpo = await lerJson(req);
-  const email = lerEmail(corpo.email);
-  const linha = db.prepare('SELECT * FROM clientes WHERE email = ?').get(email);
-  const confere = await senhaDoClienteConfere(corpo.senha, linha?.senha);
-  if (ehRobo(corpo) || !linha || !confere) {
-    await new Promise(r => setTimeout(r, 400 + crypto.randomInt(400)));
-    if (linha && !linha.senha) throw new ErroHttp(401, 'Essa conta ainda não tem senha. Use "Sem senha" para receber um link no e-mail.');
-    throw new ErroHttp(401, 'E-mail ou senha incorretos.');
-  }
-  abrirSessaoCliente(req, res, linha.id, 'senha');
-  responder(res, 200, { ok: true });
-}
-
-async function pedirLink(req, res) {
-  if (!emailLigado()) throw new ErroHttp(503, 'A entrada sem senha ainda não está disponível. Entre com e-mail e senha.');
-  const corpo = await lerJson(req);
-  const email = lerEmail(corpo.email);
-  if (!dentroDoLimite(`link:${ipDe(req)}`, 5, QUINZE_MIN) || !dentroDoLimite(`link:${email}`, 3, QUINZE_MIN)) throw new ErroHttp(429, 'Muitos links pedidos. Espere 15 minutos.');
-  if (!ehRobo(corpo)) {
-    const token = crypto.randomBytes(32).toString('base64url');
-    db.prepare('INSERT INTO links_entrada (token_hash, email, expira_em) VALUES (?, ?, ?)').run(hashCliente(token), email, Date.now() + LINK_MS);
-    const cfg = lerConfig(db);
-    try {
-      await enviarEmail(cfg, emailLinkEntrada(cfg, email, `${urlDoSite(req)}/conta/link/${token}`));
-    } catch (erro) {
-      console.error('Link de entrada:', erro.message);
-      throw new ErroHttp(502, 'Não consegui enviar o e-mail agora. Tente de novo em instantes.');
-    }
-  }
-  responder(res, 200, { ok: true });
-}
-
-// O link do e-mail abre uma página com um botão: robôs que "visitam" links de e-mail não gastam o link.
-async function usarLink(req, res) {
-  limiteConta(req);
-  const { token } = await lerJson(req);
-  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new ErroHttp(400, 'Link inválido.');
-  const hash = hashCliente(token);
-  const link = db.prepare('SELECT * FROM links_entrada WHERE token_hash = ? AND expira_em > ?').get(hash, Date.now());
-  db.prepare('DELETE FROM links_entrada WHERE token_hash = ?').run(hash);
-  if (!link) throw new ErroHttp(400, 'Esse link expirou ou já foi usado. Peça outro.');
-  db.prepare('INSERT OR IGNORE INTO clientes (email) VALUES (?)').run(link.email);
-  db.prepare('UPDATE clientes SET email_confirmado = 1 WHERE email = ?').run(link.email);
-  abrirSessaoCliente(req, res, db.prepare('SELECT id FROM clientes WHERE email = ?').get(link.email).id, 'link');
-  responder(res, 200, { ok: true });
-}
-
-function sairConta(req, res) {
-  const token = tokenCliente(req);
-  if (token) db.prepare('DELETE FROM sessoes_clientes WHERE token_hash = ?').run(hashCliente(token));
-  res.setHeader('Set-Cookie', cookieCliente(req, '', 0));
-  responder(res, 200, { ok: true });
-}
-
-const CAMPOS_ENDERECO = { telefone: 20, cep: 9, rua: 120, numero: 20, complemento: 80, bairro: 80, cidade: 80, uf: 2 };
-async function atualizarConta(req, res) {
-  const cliente = exigirCliente(req);
-  const corpo = await lerJson(req);
-  if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) throw new ErroHttp(400, 'Dados inválidos.');
-  const nome = 'nome' in corpo ? texto(corpo.nome, 120, 'Nome').replace(/\s+/g, ' ') : cliente.nome;
-  if (!nomeValido(nome)) throw new ErroHttp(400, 'Digite seu nome completo (nome e sobrenome).');
-  const dados = { ...cliente.dados };
-  for (const [campo, max] of Object.entries(CAMPOS_ENDERECO)) if (campo in corpo) dados[campo] = texto(corpo[campo], max, campo);
-  if (dados.telefone) dados.telefone = soDigitos(dados.telefone);
-  if (dados.cep) dados.cep = soDigitos(dados.cep);
-  if (dados.uf) dados.uf = dados.uf.toUpperCase();
-  if (corpo.senhaNova) {
-    limiteConta(req);
-    const senhaNova = lerSenhaNova(corpo.senhaNova);
-    // Quem entrou pelo link do e-mail já provou que é dono da conta (é o "esqueci a senha").
-    if (cliente.temSenha && cliente.via !== 'link') {
-      const linha = db.prepare('SELECT senha FROM clientes WHERE id = ?').get(cliente.id);
-      if (!(await senhaDoClienteConfere(corpo.senhaAtual ?? '', linha.senha))) throw new ErroHttp(400, 'A senha atual não confere.');
-    }
-    db.prepare('UPDATE clientes SET senha = ? WHERE id = ?').run(await gerarHashSenha(senhaNova), cliente.id);
-  }
-  db.prepare('UPDATE clientes SET nome = ?, dados = ? WHERE id = ?').run(nome, JSON.stringify(dados), cliente.id);
-  responder(res, 200, { ok: true });
-}
-
-function pedidosDoCliente(cliente) {
-  // Pedidos feitos logado; com o e-mail confirmado, também os feitos antes de ter conta.
-  return db.prepare(`SELECT * FROM pedidos WHERE cliente_id = ? OR (? = 1 AND json_extract(cliente, '$.email') = ?) ORDER BY id DESC LIMIT 50`)
-    .all(cliente.id, cliente.email_confirmado ? 1 : 0, cliente.email).map(paraPedido);
-}
-function verConta(req, res) {
-  const cliente = sessaoCliente(req);
-  res.setHeader('Cache-Control', 'no-store');
-  html(res, 200, paginaConta(lerConfig(db), listarVisiveis(), { cliente, pedidos: cliente ? pedidosDoCliente(cliente) : [], semSenhaLigado: emailLigado() }));
-}
-const dadosParaCheckout = cliente => (cliente ? { nome: cliente.nome, email: cliente.email, ...cliente.dados } : null);
 
 // ---------- depoimentos ----------
 const listarDepoimentos = () => db.prepare('SELECT * FROM depoimentos WHERE aprovado = 1 ORDER BY id DESC LIMIT 60').all();
@@ -863,17 +692,9 @@ const ROTAS = [
   ['GET', /^\/checkout\/?$/, (req, res) => {
     const cfg = lerConfig(db);
     res.setHeader('Cache-Control', 'no-store');
-    html(res, 200, paginaCheckout(cfg, listarVisiveis(), freteLigado(cfg) && pagamentoLigado(), dadosParaCheckout(sessaoCliente(req))));
+    html(res, 200, paginaCheckout(cfg, listarVisiveis(), freteLigado(cfg) && pagamentoLigado()));
   }],
-  ['GET', /^\/conta\/?$/, verConta],
-  ['GET', /^\/conta\/link\/([A-Za-z0-9_-]{43})$/, (req, res, [token]) => { res.setHeader('Cache-Control', 'no-store'); html(res, 200, paginaLinkEntrada(lerConfig(db), listarVisiveis(), token)); }],
   ['GET', /^\/depoimentos\/?$/, (req, res) => html(res, 200, paginaDepoimentos(lerConfig(db), listarVisiveis(), listarDepoimentos()))],
-  ['POST', /^\/api\/conta\/criar$/, criarConta],
-  ['POST', /^\/api\/conta\/entrar$/, entrarConta],
-  ['POST', /^\/api\/conta\/link$/, pedirLink],
-  ['POST', /^\/api\/conta\/link\/entrar$/, usarLink],
-  ['POST', /^\/api\/conta\/sair$/, sairConta],
-  ['PATCH', /^\/api\/conta$/, atualizarConta],
   ['GET', /^\/pedido\/([A-Za-z0-9_-]{12})$/, verPedido],
   ['POST', /^\/api\/frete$/, calcularFrete],
   ['GET', /^\/api\/cep\/(\d{5}-?\d{3})$/, buscarEndereco],
@@ -882,7 +703,7 @@ const ROTAS = [
   ['GET', /^\/admin\/?$/, (req, res) => { res.setHeader('Cache-Control', 'no-store'); html(res, 200, paginaAdmin()); }],
   ['GET', /^\/fotos\/([^/]+)$/, servirFoto],
   ['GET', /^\/static\/(.+)$/, estatico],
-  ['GET', /^\/robots\.txt$/, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /checkout\nDisallow: /pedido/\nDisallow: /conta\n'); }],
+  ['GET', /^\/robots\.txt$/, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /checkout\nDisallow: /pedido/\n'); }],
   ['GET', /^\/api\/sessao$/, (req, res) => responder(res, 200, { logado: logado(req), painelLigado: !motivoPainelDesligado(), motivo: motivoPainelDesligado() })],
   ['POST', /^\/api\/entrar$/, entrar],
   ['POST', /^\/api\/sair$/, sair],
@@ -977,7 +798,7 @@ servidor.requestTimeout = 120 * 1000;
 servidor.keepAliveTimeout = 10 * 1000;
 
 setInterval(() => {
-  for (const tabela of ['sessoes', 'sessoes_clientes', 'links_entrada']) db.prepare(`DELETE FROM ${tabela} WHERE expira_em < ?`).run(Date.now());
+  db.prepare('DELETE FROM sessoes WHERE expira_em < ?').run(Date.now());
 }, 60 * 60 * 1000).unref();
 setInterval(() => {
   const agora = Date.now();
