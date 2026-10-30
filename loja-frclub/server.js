@@ -68,11 +68,14 @@ async function lerJson(req, limite = 64 * 1024) {
     if (tamanho > limite) throw new ErroHttp(413, 'Envio grande demais. Tente com menos fotos de cada vez.');
     partes.push(parte);
   }
+  let dados;
   try {
-    return JSON.parse(Buffer.concat(partes).toString('utf8') || '{}');
+    dados = JSON.parse(Buffer.concat(partes).toString('utf8') || '{}');
   } catch {
     throw new ErroHttp(400, 'Dados inválidos.');
   }
+  if (!dados || typeof dados !== 'object' || Array.isArray(dados)) throw new ErroHttp(400, 'Dados inválidos.');
+  return dados;
 }
 
 // ---------- sessão do painel ----------
@@ -418,7 +421,7 @@ function lerEmail(v) {
 function lerCliente(c) {
   if (!c || typeof c !== 'object' || Array.isArray(c)) throw new ErroHttp(400, 'Preencha seus dados.');
   const cliente = {
-    nome: texto(c.nome, 120, 'Nome').replace(/\s+/g, ' '),
+    nome: texto(c.nome, 120, 'Nome').normalize('NFC').replace(/\s+/g, ' '),
     email: lerEmail(c.email),
     cpf: soDigitos(texto(c.cpf, 20, 'CPF')),
     telefone: soDigitos(texto(c.telefone, 20, 'Telefone')),
@@ -554,7 +557,7 @@ function lerDepoimento(corpo) {
     texto: texto(corpo.texto, 1000, 'Depoimento'),
     nota: Number(corpo.nota),
   };
-  if (d.nome.length < 2) throw new ErroHttp(400, 'Digite seu nome.');
+  if (d.nome.length < 2) throw new ErroHttp(400, 'Digite o nome de quem fez o depoimento.');
   if (d.texto.length < 10) throw new ErroHttp(400, 'Escreva um pouco mais sobre a sua experiência.');
   if (!Number.isInteger(d.nota) || d.nota < 1 || d.nota > 5) throw new ErroHttp(400, 'Escolha de 1 a 5 estrelas.');
   return d;
@@ -753,7 +756,9 @@ const servidor = http.createServer(async (req, res) => {
   }
   const ip = ipDe(req);
   const escrita = req.method !== 'GET' && req.method !== 'HEAD';
-  if (!dentroDoLimite(`geral:${ip}`, 300) || (escrita && !dentroDoLimite(`escrita:${ip}`, 60))) {
+  // Fotos e arquivos do site não contam: uma página do catálogo sozinha pede dezenas de fotos, e no 4G muita gente divide o mesmo IP.
+  const arquivo = !escrita && (url.pathname.startsWith('/fotos/') || url.pathname.startsWith('/static/'));
+  if ((!arquivo && !dentroDoLimite(`geral:${ip}`, 300)) || (escrita && !dentroDoLimite(`escrita:${ip}`, 60))) {
     res.writeHead(429, { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '60' });
     return res.end('Muitos pedidos seguidos. Espere um minuto.');
   }

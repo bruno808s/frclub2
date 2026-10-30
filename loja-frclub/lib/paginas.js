@@ -26,6 +26,8 @@ function linkWhats(cfg, texto) {
 }
 
 const checkoutLigado = cfg => freteLigado(cfg) && pagamentoLigado();
+// WhatsApp e Instagram só mostram a foto da prévia do link com o endereço completo.
+const enderecoCompleto = caminho => `${(process.env.SITE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '')}${caminho}`;
 
 const unicos = lista => [...new Set(lista.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
@@ -59,7 +61,7 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
   <meta property="og:type" content="website">
   <meta property="og:title" content="${esc(titulo || cfg.nomeLoja)}">
   <meta property="og:description" content="${esc(descricao || cfg.barraTopo)}">
-  ${imagemOg ? `<meta property="og:image" content="${esc(imagemOg)}">` : ''}
+  ${imagemOg ? `<meta property="og:image" content="${esc(enderecoCompleto(imagemOg))}">` : ''}
   <link rel="icon" href="/static/img/logo-cor.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

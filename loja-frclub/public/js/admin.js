@@ -209,7 +209,7 @@ function formPeca(corpo, p) {
         <label class="campo"><span>Tamanhos (separe com vírgula)</span><input name="tamanhos" value="${esc(p.tamanhos.join(', '))}" placeholder="Ex.: P, M, G ou 40, 41, 42"></label>
         <label class="campo"><span>Estado (opcional)</span><input name="estado" maxlength="60" value="${esc(p.estado)}" placeholder="Ex.: Novo com etiqueta, 9/10"></label>
         <label class="campo largo"><span>Descrição</span><textarea name="descricao" rows="5" maxlength="4000" placeholder="Material, medidas, detalhes">${esc(p.descricao)}</textarea></label>
-        <label class="campo largo"><span>Link de pagamento (Pagar.me ou outro, opcional)</span><input name="link_pagamento" maxlength="500" value="${esc(p.link_pagamento)}" placeholder="https://..."><small class="nota">Com link, aparece o botão "Comprar agora" na página da peça.</small></label>
+        <label class="campo largo"><span>Link de pagamento avulso (opcional)</span><input name="link_pagamento" maxlength="500" value="${esc(p.link_pagamento)}" placeholder="https://..."><small class="nota">Só é usado se o pagamento pelo site (Mercado Pago) estiver desligado. Com ele ligado, pode deixar vazio.</small></label>
       </section>
       <section class="bloco chaves">
         <label class="chave"><input type="checkbox" name="visivel" ${p.visivel ? 'checked' : ''}><span>Mostrar no site</span></label>
@@ -311,6 +311,7 @@ function formPeca(corpo, p) {
 
 // ---------- pedidos ----------
 const STATUS = { aguardando: 'Aguardando pagamento', pago: 'Pago: enviar', enviado: 'Enviado', cancelado: 'Cancelado' };
+const STATUS_MP = { approved: 'aprovado', pending: 'pendente', in_process: 'em análise', authorized: 'autorizado', rejected: 'recusado', cancelled: 'cancelado', refunded: 'devolvido', charged_back: 'contestado' };
 const formatarCpf = c => String(c).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
 const formatarCep = c => String(c).replace(/^(\d{5})(\d{3})$/, '$1-$2');
 async function abaPedidos(corpo) {
@@ -351,7 +352,7 @@ async function abaPedidos(corpo) {
         <ul class="pedido-itens">
           ${p.itens.map(i => `<li>${i.quantidade > 1 ? `${i.quantidade}× ` : ''}${esc(`${i.marca ? `${i.marca} ` : ''}${i.nome}`)}${i.tamanho ? ` · tam. ${esc(i.tamanho)}` : ''} · ${reais(i.preco * i.quantidade)}</li>`).join('')}
           <li>Frete ${esc(p.frete_nome)} · ${reais(p.frete_valor)}</li>
-          <li><b>Total ${reais(p.total)}</b>${p.mp_status ? ` <span class="nota">(Mercado Pago: ${esc(p.mp_status)})</span>` : ''}</li>
+          <li><b>Total ${reais(p.total)}</b>${p.mp_status ? ` <span class="nota">(Mercado Pago: ${esc(STATUS_MP[p.mp_status] ?? p.mp_status)})</span>` : ''}</li>
         </ul>
         <p class="pedido-endereco">
           ${esc(c.nome)} · CPF ${esc(formatarCpf(c.cpf))}<br>

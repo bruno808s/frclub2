@@ -166,30 +166,26 @@
   }
   const NOME_COMPLETO = /^\p{L}{2,}(?: [\p{L}'.-]+)* [\p{L}'.-]{2,}$/u;
   const REGRAS = {
-    nome: v => (NOME_COMPLETO.test(v.replace(/\s+/g, ' ').trim()) ? '' : 'Digite seu nome completo (nome e sobrenome), só com letras.'),
+    nome: v => (NOME_COMPLETO.test(v.normalize('NFC').replace(/\s+/g, ' ').trim()) ? '' : 'Digite seu nome completo (nome e sobrenome), só com letras.'),
     email: v => (/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(v.trim()) ? '' : 'E-mail inválido.'),
     cpf: v => (cpfValido(v.replace(/\D/g, '')) ? '' : 'CPF inválido.'),
     telefone: v => { const n = v.replace(/\D/g, ''); return n.length >= 10 && n.length <= 11 ? '' : 'Celular inválido: DDD + número.'; },
     cep: v => (v.replace(/\D/g, '').length === 8 ? '' : 'CEP inválido.'),
     uf: v => (/^[A-Za-z]{2}$/.test(v.trim()) ? '' : 'Use a sigla, como BA ou SP.'),
-    senha: v => (v.length >= 8 ? '' : 'A senha precisa ter pelo menos 8 caracteres.'),
-    senhaNova: v => (v.length >= 8 ? '' : 'A senha precisa ter pelo menos 8 caracteres.'),
   };
   // Mostra o erro embaixo do campo. Campo opcional vazio passa.
   function conferirCampo(input) {
     const v = input.value;
     let msg = '';
     if (!v.trim()) msg = input.required ? 'Preencha este campo.' : '';
-    // No login a senha não é conferida aqui (quem confere é o servidor).
-    else if (REGRAS[input.name] && !(input.form?.dataset.formConta === 'entrar' && input.name === 'senha')) msg = REGRAS[input.name](v);
+    else if (REGRAS[input.name]) msg = REGRAS[input.name](v);
     const aviso = input.parentElement.querySelector('.campo-erro');
     input.setAttribute('aria-invalid', String(Boolean(msg)));
     if (aviso) { aviso.textContent = msg; aviso.hidden = !msg; }
     return !msg;
   }
   function conferirForm(form) {
-    const campos = [...form.querySelectorAll('.campo input')].filter(i => i.name !== 'site');
-    const ruins = campos.filter(i => !conferirCampo(i));
+    const ruins = [...form.querySelectorAll('.campo input')].filter(i => !conferirCampo(i));
     ruins[0]?.focus();
     return !ruins.length;
   }
