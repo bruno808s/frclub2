@@ -402,11 +402,10 @@ async function abaDepoimentos(corpo) {
   const estrelas = n => '★'.repeat(n) + '☆'.repeat(5 - n);
   corpo.innerHTML = `
     <div class="cabeca-aba">
-      <div><h1>Depoimentos</h1><p class="nota">${lista.filter(d => !d.aprovado).length} esperando aprovação · ${lista.filter(d => d.aprovado).length} no site</p></div>
+      <div><h1>Depoimentos</h1><p class="nota">${lista.filter(d => d.aprovado).length} no site</p></div>
     </div>
-    <p class="nota" style="margin-bottom:14px">Os depoimentos enviados pelo site só aparecem depois que você aprovar. Recebeu um elogio no WhatsApp ou Instagram? Cadastre abaixo.</p>
-    <ul class="lista-pedidos" data-lista></ul>
-    <form class="bloco grade-campos" data-novo novalidate style="margin-top:24px">
+    <p class="nota" style="margin-bottom:14px">Só você cadastra os depoimentos. Eles aparecem na página inicial e em /depoimentos.</p>
+    <form class="bloco grade-campos" data-novo novalidate>
       <h2 class="largo">Cadastrar depoimento</h2>
       <label class="campo"><span>Nome</span><input name="nome" maxlength="60" required></label>
       <label class="campo"><span>Cidade (opcional)</span><input name="cidade" maxlength="60"></label>
@@ -414,22 +413,23 @@ async function abaDepoimentos(corpo) {
       <label class="campo largo"><span>Depoimento</span><textarea name="texto" rows="4" maxlength="1000" required></textarea></label>
       <p class="erro largo" role="alert" hidden></p>
       <div><button class="botao" type="submit">Publicar no site</button></div>
-    </form>`;
+    </form>
+    <ul class="lista-pedidos" data-lista></ul>`;
   const ul = corpo.querySelector('[data-lista]');
   const desenhar = () => {
     ul.innerHTML = lista.length ? lista.map(d => `
       <li class="pedido-card" data-id="${d.id}">
         <div class="pedido-topo">
           <div><b>${esc(d.nome)}</b><span class="nota">${d.cidade ? ` · ${esc(d.cidade)}` : ''} · ${new Date(`${d.criado_em.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR')}</span></div>
-          <span class="selo-status ${d.aprovado ? 'status-pago' : ''}">${d.aprovado ? 'No site' : 'Esperando aprovação'}</span>
+          <span class="selo-status ${d.aprovado ? 'status-pago' : ''}">${d.aprovado ? 'No site' : 'Escondido'}</span>
         </div>
         <p>${estrelas(d.nota)}</p>
         <p style="white-space:pre-line">${esc(d.texto)}</p>
         <div class="linha-botoes">
-          <button class="botao ${d.aprovado ? 'botao-linha' : ''}" type="button" data-aprovar="${d.aprovado ? '0' : '1'}">${d.aprovado ? 'Tirar do site' : 'Aprovar'}</button>
+          <button class="botao ${d.aprovado ? 'botao-linha' : ''}" type="button" data-aprovar="${d.aprovado ? '0' : '1'}">${d.aprovado ? 'Esconder do site' : 'Mostrar no site'}</button>
           <button class="link perigo" type="button" data-excluir>Excluir</button>
         </div>
-      </li>`).join('') : '<li class="nota vazio">Nenhum depoimento ainda. Eles aparecem aqui quando alguém envia pelo site.</li>';
+      </li>`).join('') : '<li class="nota vazio">Nenhum depoimento ainda. Cadastre o primeiro acima.</li>';
   };
   desenhar();
   ul.addEventListener('click', async e => {
@@ -440,7 +440,7 @@ async function abaDepoimentos(corpo) {
       if (e.target.closest('[data-aprovar]')) {
         const novo = await api('PATCH', `/admin/depoimentos/${id}`, { aprovado: e.target.closest('[data-aprovar]').dataset.aprovar === '1' });
         lista = lista.map(d => (d.id === id ? novo : d));
-        avisar(novo.aprovado ? 'Aprovado. Já está no site.' : 'Saiu do site.');
+        avisar(novo.aprovado ? 'Voltou para o site.' : 'Escondido do site.');
       } else if (e.target.closest('[data-excluir]')) {
         if (!confirm('Excluir este depoimento? Não dá para desfazer.')) return;
         await api('DELETE', `/admin/depoimentos/${id}`);

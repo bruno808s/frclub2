@@ -101,8 +101,7 @@ export function emailPedidoEnviado(cfg, pedido, base) {
     html: moldura(cfg, 'Pedido enviado', `
       ${paragrafo(`Oi, ${esc(primeiroNome(pedido.cliente.nome))}! Seu pedido <b>${esc(pedido.codigo)}</b> já está a caminho (${esc(pedido.frete_nome)}).`)}
       ${pedido.rastreio ? paragrafo(`Código de rastreio: <b>${esc(pedido.rastreio)}</b>`) : ''}
-      ${botao(rastreio || link, pedido.rastreio ? 'Rastrear entrega' : 'Ver pedido')}
-      ${paragrafo(`Quando chegar, conta pra gente como foi: <a href="${esc(`${base}/depoimentos`)}" style="color:#000">deixe seu depoimento</a>.`)}`),
+      ${botao(rastreio || link, pedido.rastreio ? 'Rastrear entrega' : 'Ver pedido')}`),
     texto: `Seu pedido ${pedido.codigo} foi enviado.${pedido.rastreio ? ` Rastreio: ${pedido.rastreio}.` : ''} ${link}`,
   };
 }

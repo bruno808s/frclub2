@@ -730,15 +730,6 @@ function lerDepoimento(corpo) {
   if (!Number.isInteger(d.nota) || d.nota < 1 || d.nota > 5) throw new ErroHttp(400, 'Escolha de 1 a 5 estrelas.');
   return d;
 }
-async function criarDepoimento(req, res) {
-  if (!dentroDoLimite(`depoimento:${ipDe(req)}`, 3, 60 * 60 * 1000)) throw new ErroHttp(429, 'Você já mandou depoimentos agora há pouco. Tente mais tarde.');
-  const corpo = await lerJson(req);
-  if (ehRobo(corpo)) return responder(res, 201, { ok: true });
-  const d = lerDepoimento(corpo);
-  // Entra escondido: só aparece no site depois que a loja aprovar no painel.
-  db.prepare('INSERT INTO depoimentos (nome, cidade, texto, nota, cliente_id) VALUES (?, ?, ?, ?, ?)').run(d.nome, d.cidade, d.texto, d.nota, sessaoCliente(req)?.id ?? null);
-  responder(res, 201, { ok: true });
-}
 async function criarDepoimentoAdmin(req, res) {
   const d = lerDepoimento(await lerJson(req));
   const { lastInsertRowid } = db.prepare('INSERT INTO depoimentos (nome, cidade, texto, nota, aprovado) VALUES (?, ?, ?, ?, 1)').run(d.nome, d.cidade, d.texto, d.nota);
@@ -876,14 +867,13 @@ const ROTAS = [
   }],
   ['GET', /^\/conta\/?$/, verConta],
   ['GET', /^\/conta\/link\/([A-Za-z0-9_-]{43})$/, (req, res, [token]) => { res.setHeader('Cache-Control', 'no-store'); html(res, 200, paginaLinkEntrada(lerConfig(db), listarVisiveis(), token)); }],
-  ['GET', /^\/depoimentos\/?$/, (req, res) => html(res, 200, paginaDepoimentos(lerConfig(db), listarVisiveis(), listarDepoimentos(), sessaoCliente(req)?.nome ?? ''))],
+  ['GET', /^\/depoimentos\/?$/, (req, res) => html(res, 200, paginaDepoimentos(lerConfig(db), listarVisiveis(), listarDepoimentos()))],
   ['POST', /^\/api\/conta\/criar$/, criarConta],
   ['POST', /^\/api\/conta\/entrar$/, entrarConta],
   ['POST', /^\/api\/conta\/link$/, pedirLink],
   ['POST', /^\/api\/conta\/link\/entrar$/, usarLink],
   ['POST', /^\/api\/conta\/sair$/, sairConta],
   ['PATCH', /^\/api\/conta$/, atualizarConta],
-  ['POST', /^\/api\/depoimentos$/, criarDepoimento],
   ['GET', /^\/pedido\/([A-Za-z0-9_-]{12})$/, verPedido],
   ['POST', /^\/api\/frete$/, calcularFrete],
   ['GET', /^\/api\/cep\/(\d{5}-?\d{3})$/, buscarEndereco],

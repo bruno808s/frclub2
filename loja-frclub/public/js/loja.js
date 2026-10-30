@@ -192,9 +192,8 @@
     const v = input.value;
     let msg = '';
     if (!v.trim()) msg = input.required ? 'Preencha este campo.' : '';
-    // No login a senha não é conferida aqui; no depoimento basta o primeiro nome.
-    else if (REGRAS[input.name] && !(input.form?.dataset.formConta === 'entrar' && input.name === 'senha')
-      && !(input.form?.hasAttribute('data-form-depoimento') && input.name === 'nome')) msg = REGRAS[input.name](v);
+    // No login a senha não é conferida aqui (quem confere é o servidor).
+    else if (REGRAS[input.name] && !(input.form?.dataset.formConta === 'entrar' && input.name === 'senha')) msg = REGRAS[input.name](v);
     const aviso = input.parentElement.querySelector('.campo-erro');
     input.setAttribute('aria-invalid', String(Boolean(msg)));
     if (aviso) { aviso.textContent = msg; aviso.hidden = !msg; }
@@ -379,15 +378,6 @@
   $('[data-sair-conta]')?.addEventListener('click', async () => { await postar('/api/conta/sair', {}).catch(() => {}); location.href = '/'; });
   const formLink = $('[data-usar-link]');
   if (formLink) aoEnviar(formLink, async () => { await postar('/api/conta/link/entrar', { token: formLink.dataset.usarLink }); location.replace('/conta'); });
-
-  // ---------- depoimentos ----------
-  const formDepoimento = $('[data-form-depoimento]');
-  if (formDepoimento) aoEnviar(formDepoimento, async d => {
-    if (String(d.texto || '').trim().length < 10) throw new Error('Escreva um pouco mais sobre a sua experiência.');
-    await postar('/api/depoimentos', { ...d, nota: Number(d.nota) });
-    formDepoimento.texto.value = '';
-    return 'Obrigado! Seu depoimento aparece aqui assim que a loja aprovar.';
-  });
 
   // ---------- página do pedido ----------
   const pedido = $('.pedido');

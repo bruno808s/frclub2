@@ -362,19 +362,9 @@ input[aria-invalid="true"] { border-color: #b42318; }
 .depoimento-data { color: var(--cinza-3); font-size: 13px; }
 .estrelas { font-size: 18px; letter-spacing: .2em; }
 .estrelas span { color: var(--cinza-2); }
-.depoimento-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 760px; margin: 0 auto; }
-.depoimento-form > h2, .depoimento-form > .nota, .depoimento-form > .form-erro, .depoimento-form > .form-ok, .escolher-estrelas { grid-column: 1 / -1; }
-.depoimento-form .botao { justify-self: start; }
-/* estrelas de escolher: em ordem invertida no código para o "acender até aqui" funcionar só com CSS */
-.escolher-estrelas { display: flex; flex-direction: row-reverse; justify-content: flex-end; gap: 4px; margin: 0; padding: 0; border: 0; }
-.escolher-estrelas legend { width: 100%; margin-bottom: 6px; font-size: 13px; color: var(--cinza-4); }
-.escolher-estrelas input { position: absolute; opacity: 0; }
-.escolher-estrelas label { font-size: 34px; line-height: 1; color: var(--cinza-2); cursor: pointer; }
-.escolher-estrelas input:checked ~ label, .escolher-estrelas label:hover, .escolher-estrelas label:hover ~ label { color: var(--preto); }
-.escolher-estrelas input:focus-visible + label { outline: 2px solid var(--preto); outline-offset: 2px; }
 
 @media (max-width: 860px) {
-  .conta, .conta-dados, .depoimento-form { grid-template-columns: 1fr; }
+  .conta, .conta-dados { grid-template-columns: 1fr; }
   .conta-lateral { position: static; }
   .conta-pedidos a { grid-template-columns: 1fr auto; }
   .conta-pedidos a > b { grid-column: 1 / -1; }

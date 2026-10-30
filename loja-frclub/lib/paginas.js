@@ -209,13 +209,14 @@ export function paginaInicio(cfg, produtos, depoimentos = []) {
     <div class="trilho">${destaques.map(cartao).join('')}</div>
   </section>` : ''}
 
+  ${depoimentos.length ? `
   <section class="secao" aria-labelledby="depoimentos-titulo">
     <div class="secao-cabeca">
       <h2 id="depoimentos-titulo">Depoimentos</h2>
-      <a class="link-linha" href="/depoimentos">${depoimentos.length ? 'Ver todos e deixar o seu' : 'Deixe o seu depoimento'}</a>
+      <a class="link-linha" href="/depoimentos">Ver todos</a>
     </div>
-    ${depoimentos.length ? `<div class="trilho trilho-depoimentos">${depoimentos.map(cartaoDepoimento).join('')}</div>` : '<p class="vazio">Comprou com a gente? Conte como foi a sua experiência.</p>'}
-  </section>
+    <div class="trilho trilho-depoimentos">${depoimentos.map(cartaoDepoimento).join('')}</div>
+  </section>` : ''}
 
   ${cfg.selos?.filter(Boolean).length ? `
   <section class="selos" aria-label="Por que comprar com a gente">
@@ -415,7 +416,6 @@ export function paginaPedido(cfg, produtos, pedido) {
     </div>
     <p class="nota">Entrega para ${esc(pedido.cliente.nome)} · ${esc(`${pedido.cliente.rua}, ${pedido.cliente.numero} · ${pedido.cliente.cidade}/${pedido.cliente.uf}`)}</p>
     ${cfg.whatsapp ? `<a class="botao botao-linha" href="${esc(linkWhats(cfg, `Olá! Sobre o meu pedido ${pedido.codigo}.`))}" target="_blank" rel="noopener">Falar no WhatsApp</a>` : ''}
-    ${pedido.status === 'enviado' ? '<p class="nota">Já recebeu? <a class="sublinhado" href="/depoimentos">Conte como foi a sua compra</a>.</p>' : ''}
   </section>`;
   return moldura(cfg, produtos, { titulo, corpo });
 }
@@ -534,7 +534,7 @@ export function paginaLinkEntrada(cfg, produtos, token) {
   return moldura(cfg, produtos, { titulo: 'Entrar', corpo });
 }
 
-export function paginaDepoimentos(cfg, produtos, depoimentos, nome) {
+export function paginaDepoimentos(cfg, produtos, depoimentos) {
   const media = depoimentos.length ? depoimentos.reduce((t, d) => t + d.nota, 0) / depoimentos.length : 0;
   const corpo = `
   <section class="secao catalogo">
@@ -542,24 +542,7 @@ export function paginaDepoimentos(cfg, produtos, depoimentos, nome) {
       <h1>Depoimentos</h1>
       ${depoimentos.length ? `<p class="nota">${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} de 5 · ${depoimentos.length} ${depoimentos.length === 1 ? 'avaliação' : 'avaliações'}</p>` : ''}
     </div>
-    ${depoimentos.length ? `<div class="grade-depoimentos">${depoimentos.map(cartaoDepoimento).join('')}</div>` : '<p class="vazio">Ainda não há depoimentos. Seja a primeira pessoa a contar como foi.</p>'}
-  </section>
-  <section class="secao secao-cinza" aria-labelledby="deixar-depoimento">
-    <form class="depoimento-form" data-form-depoimento novalidate>
-      <h2 id="deixar-depoimento">Deixe seu depoimento</h2>
-      <p class="nota">Conte como foi comprar com a gente. Ele aparece aqui depois de aprovado pela loja.</p>
-      <fieldset class="escolher-estrelas">
-        <legend>Sua nota</legend>
-        ${[5, 4, 3, 2, 1].map(n => `<input type="radio" name="nota" value="${n}" id="nota-${n}" ${n === 5 ? 'checked' : ''}><label for="nota-${n}" aria-label="${n} ${n === 1 ? 'estrela' : 'estrelas'}">★</label>`).join('')}
-      </fieldset>
-      ${campo('nome', 'Seu nome', `autocomplete="name" maxlength="60" required value="${esc(nome)}"`)}
-      ${campo('cidade', 'Cidade (opcional)', 'maxlength="60" placeholder="Ex.: Salvador, BA"')}
-      <label class="campo largo"><span>Depoimento</span><textarea name="texto" rows="5" maxlength="1000" required placeholder="Como foi a peça, a entrega, o atendimento…"></textarea></label>
-      <label class="isca" aria-hidden="true">Site <input name="site" tabindex="-1" autocomplete="off"></label>
-      <p class="form-erro" role="alert" hidden></p>
-      <p class="form-ok" role="status" hidden></p>
-      <button class="botao" type="submit">Enviar depoimento</button>
-    </form>
+    ${depoimentos.length ? `<div class="grade-depoimentos">${depoimentos.map(cartaoDepoimento).join('')}</div>` : '<p class="vazio">Os depoimentos aparecem aqui em breve.</p>'}
   </section>`;
   return moldura(cfg, produtos, { titulo: 'Depoimentos', descricao: `O que dizem os clientes da ${cfg.nomeLoja}.`, corpo });
 }

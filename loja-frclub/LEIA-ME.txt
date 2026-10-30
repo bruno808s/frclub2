@@ -63,8 +63,8 @@ E-MAILS AUTOMÁTICOS (Brevo, grátis até 300 e-mails por dia)
 CONTAS DE CLIENTES E DEPOIMENTOS
   - O bonequinho do topo abre a conta do cliente: criar conta, entrar e ver os pedidos.
     O painel da loja agora fica no link "Área do lojista", no rodapé (ou /admin).
-  - Depoimentos enviados pelo site só aparecem depois que você aprovar na aba "Depoimentos".
-    Elogios que chegarem por WhatsApp ou Instagram podem ser cadastrados lá também.
+  - Os depoimentos são cadastrados só por você, na aba "Depoimentos" do painel. A seção da
+    página inicial só aparece depois do primeiro.
 
 DOMÍNIO PRÓPRIO (ex.: frclub.com.br)
   Compre em registro.br. No Render: Settings > Custom Domains > Add, e siga o passo a passo.
