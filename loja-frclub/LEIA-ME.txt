@@ -64,6 +64,17 @@ PAINEL E DEPOIMENTOS
   - Os depoimentos são cadastrados só por você, na aba "Depoimentos" do painel. A seção da
     página inicial só aparece depois do primeiro.
 
+TROCAS E DEVOLUÇÕES
+  - As páginas "Trocas e devoluções" (/devolucoes) e "Termos de uso e privacidade" (/termos)
+    ficam no rodapé. O texto das duas se edita em "Contato e textos". Revise as regras.
+  - Na página do pedido pago, o cliente clica em "Pedir troca ou devolução", escolhe as peças,
+    o que quer (trocar ou dinheiro de volta) e o motivo. Quem perdeu o link pede os links de
+    todos os pedidos pelo e-mail, em /devolucoes.
+  - Você recebe um e-mail e o pedido aparece em "Pedidos" com uma faixa dourada. Mude a
+    situação (Aprovada, Concluída, Recusada) e escreva a resposta: o cliente recebe por e-mail
+    e vê na página do pedido.
+  - O dinheiro volta pelo próprio Mercado Pago: na venda, "Devolver dinheiro".
+
 DOMÍNIO PRÓPRIO (ex.: frclub.com.br)
   Compre em registro.br. No Render: Settings > Custom Domains > Add, e siga o passo a passo.
 

@@ -119,3 +119,6 @@ a { color: inherit; }
 .integracao { margin: 0; color: var(--vermelho); }
 .integracao.ok { color: var(--verde); }
 @media (max-width: 720px) { .pedido-acoes { grid-template-columns: 1fr; } }
+.devolucao-admin { display: grid; gap: 10px; margin: 6px 0 12px; padding: 14px 16px; border-left: 3px solid #b8860b; background: #fbf8f1; }
+.pre-linha { white-space: pre-line; }
+.com-espaco { margin-bottom: 14px; }

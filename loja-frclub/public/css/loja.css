@@ -205,11 +205,12 @@ h2 { font-size: clamp(22px, 2.4vw, 30px); font-weight: 400; letter-spacing: .22e
 .frete-escolha input { accent-color: var(--preto); width: 18px; height: 18px; margin: 0; }
 
 /* ---------- checkout e pedido ---------- */
-input:not([type="radio"]):not([type="checkbox"]) {
+input:not([type="radio"]):not([type="checkbox"]), select, textarea {
   width: 100%; min-height: 48px; padding: 10px 14px; border: 1px solid var(--cinza-2); border-radius: 0;
   background: var(--branco); font: inherit; font-size: 16px; color: var(--preto);
 }
-input:focus { outline: 2px solid var(--preto); outline-offset: -1px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--preto); outline-offset: -1px; }
+textarea { resize: vertical; }
 .checkout-grade { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: clamp(28px, 5vw, 72px); align-items: start; }
 .checkout-dados { display: grid; gap: 36px; }
 .checkout-dados fieldset { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0; padding: 0; border: 0; }
@@ -248,8 +249,9 @@ input:focus { outline: 2px solid var(--preto); outline-offset: -1px; }
 
 /* ---------- rodapé e WhatsApp ---------- */
 .rodape { padding: clamp(48px, 6vw, 80px) var(--margem) 28px; background: var(--preto); color: #d6d6d2; }
-.rodape-colunas { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 36px; padding-bottom: 40px; border-bottom: 1px solid rgba(255, 255, 255, .14); }
-.rodape h2 { margin-bottom: 16px; font-size: 13px; font-weight: 500; color: var(--branco); }
+.rodape-colunas { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 36px; padding-bottom: 40px; border-bottom: 1px solid rgba(255, 255, 255, .14); }
+.rodape h2 { margin-bottom: 18px; font-size: 12px; font-weight: 500; letter-spacing: .3em; text-transform: uppercase; color: #8a8a86; }
+.rodape-cidade { color: #8a8a86; }
 .rodape ul { display: grid; gap: 10px; font-size: 15px; }
 .rodape a:hover { color: var(--branco); text-decoration: underline; }
 .rodape-logo { width: 72px; height: auto; margin-bottom: 20px; }
@@ -334,4 +336,32 @@ input[aria-invalid="true"] { border-color: #b42318; }
 @media (max-width: 860px) {
   .grade-depoimentos { grid-template-columns: 1fr; }
   .trilho-depoimentos { grid-auto-columns: 85%; }
+}
+
+/* ---------- trocas, devoluções e termos ---------- */
+.form-ok { color: #146c3f; font-size: 14px; }
+.sublinhado { text-decoration: underline; text-underline-offset: 4px; }
+.politica-texto, .politica-caixa { max-width: 760px; }
+.politica-texto h2 { margin: 36px 0 12px; font-size: 14px; font-weight: 500; letter-spacing: .22em; text-transform: uppercase; }
+.politica-texto p, .politica-texto li { color: var(--cinza-4); font-size: 16px; font-weight: 300; line-height: 1.7; }
+.politica-texto ul { display: grid; gap: 6px; padding-left: 20px; list-style: disc; }
+.politica-caixa { display: grid; gap: 14px; margin-bottom: 12px; padding: 24px; background: var(--cinza-1); }
+.politica-caixa h2 { font-size: 14px; font-weight: 500; letter-spacing: .22em; text-transform: uppercase; }
+.politica-caixa .botao { justify-self: start; }
+.meus-pedidos-form { display: grid; gap: 12px; max-width: 440px; }
+.meus-pedidos-form .botao { justify-self: start; }
+.devolucao-caixa { display: grid; gap: 14px; padding: 22px; border: 1px solid var(--cinza-2); }
+.devolucao-caixa summary { font-size: 13px; font-weight: 500; letter-spacing: .22em; text-transform: uppercase; cursor: pointer; }
+.devolucao-caixa[open] summary { margin-bottom: 6px; }
+.devolucao-caixa h2 { font-size: 20px; font-weight: 400; }
+.devolucao-resposta { display: grid; gap: 8px; padding: 14px 16px; background: var(--cinza-1); }
+.devolucao-form { display: grid; gap: 16px; margin-top: 8px; }
+.devolucao-form fieldset { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; }
+.devolucao-form legend { margin-bottom: 8px; font-size: 13px; color: var(--cinza-4); }
+.devolucao-form .botao { justify-self: start; }
+.opcao { display: flex; align-items: center; gap: 10px; font-size: 15px; cursor: pointer; }
+.opcao input { width: 18px; height: 18px; margin: 0; accent-color: var(--preto); }
+
+@media (max-width: 860px) {
+  .devolucao-form .botao, .politica-caixa .botao, .meus-pedidos-form .botao { justify-self: stretch; }
 }

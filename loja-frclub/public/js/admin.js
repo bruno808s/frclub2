@@ -311,6 +311,10 @@ function formPeca(corpo, p) {
 
 // ---------- pedidos ----------
 const STATUS = { aguardando: 'Aguardando pagamento', pago: 'Pago: enviar', enviado: 'Enviado', cancelado: 'Cancelado' };
+const STATUS_DEV = { aberta: 'Nova: responder', aprovada: 'Aprovada: aguardando a peça', concluida: 'Concluída', recusada: 'Recusada' };
+const QUER_DEV = { troca: 'Quer trocar', reembolso: 'Quer o dinheiro de volta' };
+const MOTIVO_DEV = { arrependimento: 'Desistiu da compra', tamanho: 'O tamanho não serviu', defeito: 'Defeito ou avaria', errado: 'Recebeu peça diferente', outro: 'Outro motivo' };
+const devAberta = p => p.devolucoes?.some(d => ['aberta', 'aprovada'].includes(d.status));
 const STATUS_MP = { approved: 'aprovado', pending: 'pendente', in_process: 'em análise', authorized: 'autorizado', rejected: 'recusado', cancelled: 'cancelado', refunded: 'devolvido', charged_back: 'contestado' };
 const formatarCpf = c => String(c).replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
 const formatarCep = c => String(c).replace(/^(\d{5})(\d{3})$/, '$1-$2');
@@ -323,16 +327,18 @@ async function abaPedidos(corpo) {
     corpo.innerHTML = `<p class="erro">${esc(e.message)}</p>`;
     return;
   }
-  let filtro = pedidos.some(p => p.status === 'pago') ? 'pago' : 'todos';
+  let filtro = pedidos.some(devAberta) ? 'devolucao' : pedidos.some(p => p.status === 'pago') ? 'pago' : 'todos';
+  const novasDev = pedidos.filter(p => p.devolucoes?.some(d => d.status === 'aberta')).length;
   corpo.innerHTML = `
     <div class="cabeca-aba">
-      <div><h1>Pedidos</h1><p class="nota">${pedidos.filter(p => p.status === 'pago').length} pagos esperando envio</p></div>
+      <div><h1>Pedidos</h1><p class="nota">${pedidos.filter(p => p.status === 'pago').length} pagos esperando envio${novasDev ? ` · <b>${novasDev} ${novasDev === 1 ? 'troca/devolução nova' : 'trocas/devoluções novas'}</b>` : ''}</p></div>
     </div>
     <div class="filtro-pedidos">
       <label class="campo"><span>Mostrar</span>
         <select data-filtro>
           <option value="todos">Todos</option>
           ${Object.entries(STATUS).map(([id, nome]) => `<option value="${id}">${nome}</option>`).join('')}
+          <option value="devolucao">Com troca ou devolução em andamento</option>
         </select>
       </label>
     </div>
@@ -340,7 +346,7 @@ async function abaPedidos(corpo) {
   const lista = corpo.querySelector('[data-lista]');
   corpo.querySelector('[data-filtro]').value = filtro;
   const desenhar = () => {
-    const visiveis = pedidos.filter(p => filtro === 'todos' || p.status === filtro);
+    const visiveis = pedidos.filter(p => filtro === 'todos' || (filtro === 'devolucao' ? devAberta(p) : p.status === filtro));
     lista.innerHTML = visiveis.length ? visiveis.map(p => {
       const c = p.cliente;
       return `
@@ -360,6 +366,19 @@ async function abaPedidos(corpo) {
           ${esc(`${c.bairro} · ${c.cidade}/${c.uf} · CEP ${formatarCep(c.cep)}`)}<br>
           ${esc(c.email)} · <a href="https://wa.me/55${esc(c.telefone)}" target="_blank" rel="noopener">${esc(c.telefone)}</a>
         </p>
+        ${(p.devolucoes ?? []).map(d => `
+        <div class="devolucao-admin" data-dev="${d.id}">
+          <p><b>Troca ou devolução</b> <span class="nota">· ${new Date(`${d.criado_em.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR')}</span></p>
+          <p>${esc(QUER_DEV[d.quer] ?? d.quer)} · ${esc(MOTIVO_DEV[d.motivo] ?? d.motivo)}<br>${esc(d.itens.join(', '))}</p>
+          ${d.mensagem ? `<p class="nota pre-linha">"${esc(d.mensagem)}"</p>` : ''}
+          <label class="campo"><span>Situação da troca/devolução</span>
+            <select data-dev-status>${Object.entries(STATUS_DEV).map(([id, nome]) => `<option value="${id}" ${id === d.status ? 'selected' : ''}>${nome}</option>`).join('')}</select>
+          </label>
+          <label class="campo"><span>Resposta para o cliente (vai por e-mail e aparece na página do pedido)</span>
+            <textarea data-dev-resposta rows="3" maxlength="2000" placeholder="Ex.: Aprovado! Poste a peça nos Correios com o código de autorização XXXXX até sexta.">${esc(d.resposta)}</textarea>
+          </label>
+          <div><button class="botao botao-linha" type="button" data-dev-salvar>Salvar troca/devolução</button></div>
+        </div>`).join('')}
         <div class="pedido-acoes">
           <label class="campo"><span>Situação</span>
             <select data-status>${Object.entries(STATUS).map(([id, nome]) => `<option value="${id}" ${id === p.status ? 'selected' : ''}>${nome}</option>`).join('')}</select>
@@ -373,6 +392,22 @@ async function abaPedidos(corpo) {
   desenhar();
   corpo.querySelector('[data-filtro]').addEventListener('change', e => { filtro = e.target.value; desenhar(); });
   lista.addEventListener('click', async e => {
+    const salvarDev = e.target.closest('[data-dev-salvar]');
+    if (salvarDev) {
+      const caixa = salvarDev.closest('[data-dev]');
+      const idPedido = Number(salvarDev.closest('[data-id]').dataset.id);
+      salvarDev.disabled = true;
+      try {
+        const nova = await api('PATCH', `/admin/devolucoes/${caixa.dataset.dev}`, { status: caixa.querySelector('[data-dev-status]').value, resposta: caixa.querySelector('[data-dev-resposta]').value });
+        pedidos = pedidos.map(p => (p.id === idPedido ? { ...p, devolucoes: p.devolucoes.map(d => (d.id === nova.id ? nova : d)) } : p));
+        avisar(nova.emailEnviado ? 'Salvo. O cliente recebe um e-mail com a resposta.' : 'Salvo. O cliente vê a resposta na página do pedido.');
+        desenhar();
+      } catch (falha) {
+        avisar(falha.message, 'erro');
+        salvarDev.disabled = false;
+      }
+      return;
+    }
     const botao = e.target.closest('[data-salvar]');
     if (!botao) return;
     const card = botao.closest('[data-id]');
@@ -405,7 +440,7 @@ async function abaDepoimentos(corpo) {
     <div class="cabeca-aba">
       <div><h1>Depoimentos</h1><p class="nota">${lista.filter(d => d.aprovado).length} no site</p></div>
     </div>
-    <p class="nota" style="margin-bottom:14px">Só você cadastra os depoimentos. Eles aparecem na página inicial e em /depoimentos.</p>
+    <p class="nota com-espaco">Só você cadastra os depoimentos. Eles aparecem na página inicial e em /depoimentos.</p>
     <form class="bloco grade-campos" data-novo novalidate>
       <h2 class="largo">Cadastrar depoimento</h2>
       <label class="campo"><span>Nome</span><input name="nome" maxlength="60" required></label>
@@ -425,7 +460,7 @@ async function abaDepoimentos(corpo) {
           <span class="selo-status ${d.aprovado ? 'status-pago' : ''}">${d.aprovado ? 'No site' : 'Escondido'}</span>
         </div>
         <p>${estrelas(d.nota)}</p>
-        <p style="white-space:pre-line">${esc(d.texto)}</p>
+        <p class="pre-linha">${esc(d.texto)}</p>
         <div class="linha-botoes">
           <button class="botao ${d.aprovado ? 'botao-linha' : ''}" type="button" data-aprovar="${d.aprovado ? '0' : '1'}">${d.aprovado ? 'Esconder do site' : 'Mostrar no site'}</button>
           <button class="link perigo" type="button" data-excluir>Excluir</button>
@@ -577,6 +612,12 @@ async function abaConfig(corpo, aba) {
         <h2 class="largo">Sobre a loja</h2>
         <label class="campo largo"><span>Título</span><input name="sobreTitulo" maxlength="80" value="${esc(cfg.sobreTitulo)}"></label>
         <label class="campo largo"><span>Texto (pule linha para separar parágrafos)</span><textarea name="sobreTexto" rows="6" maxlength="4000">${esc(cfg.sobreTexto)}</textarea></label>
+      </section>
+      <section class="bloco grade-campos">
+        <h2 class="largo">Páginas de regras</h2>
+        <p class="nota largo">Aparecem no rodapé. Linha começando com "## " vira título; com "- " vira item de lista. {loja} vira o nome da loja. Revise para que valha para a sua loja.</p>
+        <label class="campo largo"><span>Trocas e devoluções</span><textarea name="textoDevolucoes" rows="12" maxlength="12000">${esc(cfg.textoDevolucoes)}</textarea></label>
+        <label class="campo largo"><span>Termos de uso e privacidade</span><textarea name="textoTermos" rows="12" maxlength="12000">${esc(cfg.textoTermos)}</textarea></label>
       </section>
       <section class="bloco grade-campos">
         <h2 class="largo">Faixa de destaques (até 4 frases curtas)</h2>

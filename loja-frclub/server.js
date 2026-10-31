@@ -9,13 +9,16 @@ import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { abrirBanco, lerConfig, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
+import { abrirBanco, lerConfig, paraDevolucao, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
 import {
-  normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaCheckout, paginaDepoimentos, paginaFavoritos, paginaInicio,
-  paginaPeca, paginaPedido,
+  MOTIVOS_DEVOLUCAO, QUER_DEVOLUCAO, STATUS_DEVOLUCAO, normalizar, pagina404, paginaAdmin, paginaCatalogo, paginaCheckout,
+  paginaDepoimentos, paginaDevolucoes, paginaFavoritos, paginaInicio, paginaPeca, paginaPedido, paginaTermos, podePedirDevolucao,
 } from './lib/paginas.js';
 import { ErroServico, buscarPagamento, cotarFrete, criarCobranca, freteLigado, pagamentoLigado } from './lib/pagamento.js';
-import { emailLigado, emailNovaVenda, emailPedidoEnviado, emailPedidoPago, emailTeste, enviarDepois, enviarEmail } from './lib/email.js';
+import {
+  emailDevolucaoAtualizada, emailDevolucaoRecebida, emailLigado, emailMeusPedidos, emailNovaDevolucao, emailNovaVenda,
+  emailPedidoEnviado, emailPedidoPago, emailTeste, enviarDepois, enviarEmail,
+} from './lib/email.js';
 
 const RAIZ = path.dirname(fileURLToPath(import.meta.url));
 const PUBLICO = path.join(RAIZ, 'public');
@@ -144,7 +147,6 @@ async function entrar(req, res) {
   if (motivo) throw new ErroHttp(503, motivo);
   const ip = ipDe(req);
   const agora = Date.now();
-  const QUINZE_MIN = 15 * 60 * 1000;
   const recentes = (tentativas.get(ip) || []).filter(t => agora - t < QUINZE_MIN);
   falhasGerais = falhasGerais.filter(t => agora - t < QUINZE_MIN);
   if (recentes.length >= 8 || falhasGerais.length >= 40) throw new ErroHttp(429, 'Muitas tentativas. Espere 15 minutos.');
@@ -527,7 +529,7 @@ async function verPedido(req, res, [codigo], url) {
     }
   }
   res.setHeader('Cache-Control', 'no-store');
-  html(res, 200, paginaPedido(lerConfig(db), listarVisiveis(), pedido));
+  html(res, 200, paginaPedido(lerConfig(db), listarVisiveis(), pedido, ultimaDevolucao(pedido.id)));
 }
 
 const STATUS_PEDIDO = ['aguardando', 'pago', 'enviado', 'cancelado'];
@@ -544,7 +546,75 @@ async function editarPedido(req, res, [id]) {
     const cfg = lerConfig(db);
     enviarDepois(cfg, emailPedidoEnviado(cfg, pedido, urlDoSite(req)));
   }
-  responder(res, 200, { ...pedido, emailEnviado: status === 'enviado' && linha.status !== 'enviado' && emailLigado() });
+  responder(res, 200, { ...comDevolucoes(pedido), emailEnviado: status === 'enviado' && linha.status !== 'enviado' && emailLigado() });
+}
+
+// ---------- trocas e devoluções ----------
+const QUINZE_MIN = 15 * 60 * 1000;
+const ultimaDevolucao = pedidoId => {
+  const linha = db.prepare('SELECT * FROM devolucoes WHERE pedido_id = ? ORDER BY id DESC LIMIT 1').get(pedidoId);
+  return linha ? paraDevolucao(linha) : null;
+};
+const comDevolucoes = pedido => ({ ...pedido, devolucoes: db.prepare('SELECT * FROM devolucoes WHERE pedido_id = ? ORDER BY id DESC').all(pedido.id).map(paraDevolucao) });
+
+// O cliente pede pela página do pedido (o código do pedido é o que dá acesso a ela).
+async function pedirDevolucao(req, res, [codigo]) {
+  if (!dentroDoLimite(`devolucao:${ipDe(req)}`, 5, QUINZE_MIN)) throw new ErroHttp(429, 'Muitas tentativas. Espere 15 minutos.');
+  const linha = db.prepare('SELECT * FROM pedidos WHERE codigo = ?').get(codigo);
+  if (!linha) throw new ErroHttp(404, 'Pedido não encontrado.');
+  const pedido = paraPedido(linha);
+  if (pedido.status === 'aguardando') throw new ErroHttp(409, 'Dá para pedir troca ou devolução depois que o pagamento for aprovado.');
+  if (!podePedirDevolucao(pedido)) throw new ErroHttp(409, 'Este pedido não aceita mais troca ou devolução pelo site. Fale com a gente pelo WhatsApp.');
+  const atual = ultimaDevolucao(pedido.id);
+  if (atual && ['aberta', 'aprovada'].includes(atual.status)) throw new ErroHttp(409, 'Já existe uma troca ou devolução em andamento para este pedido.');
+  const corpo = await lerJson(req);
+  if (!Object.hasOwn(QUER_DEVOLUCAO, corpo.quer)) throw new ErroHttp(400, 'Escolha se quer trocar ou receber o dinheiro de volta.');
+  if (!Object.hasOwn(MOTIVOS_DEVOLUCAO, corpo.motivo)) throw new ErroHttp(400, 'Escolha o motivo.');
+  const indices = [...new Set((Array.isArray(corpo.itens) ? corpo.itens : []).map(Number))].filter(n => Number.isInteger(n) && n >= 0 && n < pedido.itens.length);
+  if (!indices.length) throw new ErroHttp(400, 'Escolha pelo menos uma peça.');
+  const itens = indices.map(n => { const i = pedido.itens[n]; return `${i.nome}${i.marca ? ` da ${i.marca}` : ''}${i.tamanho ? ` (tam. ${i.tamanho})` : ''}`; });
+  const mensagem = texto(corpo.mensagem, 1000, 'Mensagem');
+  const { lastInsertRowid } = db.prepare('INSERT INTO devolucoes (pedido_id, quer, motivo, itens, mensagem) VALUES (?, ?, ?, ?, ?)')
+    .run(pedido.id, corpo.quer, corpo.motivo, JSON.stringify(itens), mensagem);
+  const devolucao = paraDevolucao(db.prepare('SELECT * FROM devolucoes WHERE id = ?').get(Number(lastInsertRowid)));
+  const cfg = lerConfig(db);
+  enviarDepois(cfg, emailDevolucaoRecebida(cfg, pedido, devolucao, urlDoSite(req)));
+  if (cfg.email) enviarDepois(cfg, emailNovaDevolucao(cfg, pedido, devolucao, urlDoSite(req)));
+  responder(res, 201, devolucao);
+}
+
+async function editarDevolucao(req, res, [id]) {
+  const linha = db.prepare('SELECT * FROM devolucoes WHERE id = ?').get(Number(id));
+  if (!linha) throw new ErroHttp(404, 'Troca ou devolução não encontrada.');
+  const corpo = await lerJson(req);
+  const status = corpo.status === undefined ? linha.status : String(corpo.status);
+  if (!Object.hasOwn(STATUS_DEVOLUCAO, status)) throw new ErroHttp(400, 'Situação inválida.');
+  const resposta = corpo.resposta === undefined ? linha.resposta : texto(corpo.resposta, 2000, 'Resposta');
+  db.prepare(`UPDATE devolucoes SET status = ?, resposta = ?, atualizado_em = datetime('now') WHERE id = ?`).run(status, resposta, linha.id);
+  const devolucao = paraDevolucao(db.prepare('SELECT * FROM devolucoes WHERE id = ?').get(linha.id));
+  const mudou = status !== linha.status || resposta !== linha.resposta;
+  if (mudou) {
+    const cfg = lerConfig(db);
+    const pedido = paraPedido(db.prepare('SELECT * FROM pedidos WHERE id = ?').get(linha.pedido_id));
+    enviarDepois(cfg, emailDevolucaoAtualizada(cfg, pedido, devolucao, urlDoSite(req)));
+  }
+  responder(res, 200, { ...devolucao, emailEnviado: mudou && emailLigado() });
+}
+
+// Manda por e-mail o link de todos os pedidos pagos daquele e-mail. A resposta é sempre a mesma,
+// para o site não revelar quem já comprou.
+async function enviarMeusPedidos(req, res) {
+  if (!emailLigado()) throw new ErroHttp(503, 'Indisponível no momento. Fale com a gente pelo WhatsApp.');
+  const email = lerEmail((await lerJson(req)).email);
+  if (!dentroDoLimite(`meus-pedidos:${ipDe(req)}`, 5, QUINZE_MIN) || !dentroDoLimite(`meus-pedidos:${email}`, 2, QUINZE_MIN)) {
+    throw new ErroHttp(429, 'Muitos pedidos seguidos. Espere 15 minutos.');
+  }
+  const pedidos = db.prepare(`SELECT codigo, total, criado_em FROM pedidos WHERE json_extract(cliente, '$.email') = ? AND status != 'aguardando' ORDER BY id DESC LIMIT 20`).all(email);
+  if (pedidos.length) {
+    const cfg = lerConfig(db);
+    enviarDepois(cfg, emailMeusPedidos(cfg, email, pedidos, urlDoSite(req)));
+  }
+  responder(res, 200, { ok: true });
 }
 
 // ---------- depoimentos ----------
@@ -599,7 +669,7 @@ async function testarEmail(req, res) {
 // ---------- configuração do site ----------
 const CAMPOS_TEXTO = {
   nomeLoja: 40, barraTopo: 120, linkTopoTexto: 40, fraseHero: 80, mensagemWhatsapp: 300, tituloPecas: 60,
-  sobreTitulo: 80, sobreTexto: 4000, email: 120, cnpj: 30, cidade: 80,
+  sobreTitulo: 80, sobreTexto: 4000, email: 120, cnpj: 30, cidade: 80, textoDevolucoes: 12000, textoTermos: 12000,
 };
 // Medidas da caixa padrão: [mínimo, máximo] em kg ou cm.
 const CAMPOS_PACOTE = { pacotePeso: [0.01, 30], pacoteAltura: [1, 100], pacoteLargura: [8, 100], pacoteComprimento: [13, 100] };
@@ -729,6 +799,10 @@ const ROTAS = [
   }],
   ['GET', /^\/depoimentos\/?$/, (req, res) => html(res, 200, paginaDepoimentos(lerConfig(db), listarVisiveis(), listarDepoimentos()))],
   ['GET', /^\/pedido\/([A-Za-z0-9_-]{12})$/, verPedido],
+  ['GET', /^\/devolucoes\/?$/, (req, res) => html(res, 200, paginaDevolucoes(lerConfig(db), listarVisiveis(), emailLigado()))],
+  ['GET', /^\/termos\/?$/, (req, res) => html(res, 200, paginaTermos(lerConfig(db), listarVisiveis()))],
+  ['POST', /^\/api\/pedidos\/([A-Za-z0-9_-]{12})\/devolucao$/, pedirDevolucao],
+  ['POST', /^\/api\/meus-pedidos$/, enviarMeusPedidos],
   ['POST', /^\/api\/frete$/, calcularFrete],
   ['GET', /^\/api\/cep\/(\d{5}-?\d{3})$/, buscarEndereco],
   ['POST', /^\/api\/pedidos$/, criarPedido],
@@ -746,7 +820,8 @@ const ROTAS = [
   ['POST', /^\/api\/admin\/pecas$/, exigirLogin(criarPeca)],
   ['PATCH', /^\/api\/admin\/pecas\/(\d+)$/, exigirLogin(editarPeca)],
   ['DELETE', /^\/api\/admin\/pecas\/(\d+)$/, exigirLogin(excluirPeca)],
-  ['GET', /^\/api\/admin\/pedidos$/, exigirLogin((req, res) => responder(res, 200, db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 300').all().map(paraPedido)))],
+  ['GET', /^\/api\/admin\/pedidos$/, exigirLogin((req, res) => responder(res, 200, db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 300').all().map(paraPedido).map(comDevolucoes)))],
+  ['PATCH', /^\/api\/admin\/devolucoes\/(\d+)$/, exigirLogin(editarDevolucao)],
   ['PATCH', /^\/api\/admin\/pedidos\/(\d+)$/, exigirLogin(editarPedido)],
   ['GET', /^\/api\/admin\/depoimentos$/, exigirLogin((req, res) => responder(res, 200, db.prepare('SELECT * FROM depoimentos ORDER BY aprovado, id DESC LIMIT 500').all()))],
   ['POST', /^\/api\/admin\/depoimentos$/, exigirLogin(criarDepoimentoAdmin)],

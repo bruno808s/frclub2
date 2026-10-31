@@ -1,6 +1,6 @@
 // E-mails da loja (Brevo). A chave fica só no Render, nunca no código.
 // Variáveis: BREVO_API_KEY e EMAIL_REMETENTE (o e-mail cadastrado como remetente no Brevo).
-import { esc } from './paginas.js';
+import { MOTIVOS_DEVOLUCAO, QUER_DEVOLUCAO, STATUS_DEVOLUCAO, esc } from './paginas.js';
 
 const BREVO_URL = (process.env.BREVO_API_URL || 'https://api.brevo.com').replace(/\/$/, ''); // BREVO_API_URL só para testes
 const reais = n => Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -114,5 +114,64 @@ export function emailTeste(cfg, base) {
       ${paragrafo('Se você está lendo isto, os e-mails da loja estão funcionando: o cliente vai receber a confirmação do pagamento e o rastreio, e você recebe o aviso de cada venda.')}
       ${botao(`${base}/admin`, 'Abrir o painel')}`),
     texto: `Os e-mails da loja estão funcionando. Painel: ${base}/admin`,
+  };
+}
+
+// ---------- trocas e devoluções ----------
+const resumoDevolucao = d => `${QUER_DEVOLUCAO[d.quer] ?? d.quer} · ${MOTIVOS_DEVOLUCAO[d.motivo] ?? d.motivo} · ${d.itens.join(', ')}`;
+
+export function emailDevolucaoRecebida(cfg, pedido, d, base) {
+  const link = `${base}/pedido/${pedido.codigo}#devolucao`;
+  return {
+    para: pedido.cliente.email,
+    nome: pedido.cliente.nome,
+    assunto: `Recebemos seu pedido de troca ou devolução · ${cfg.nomeLoja}`,
+    html: moldura(cfg, 'Troca ou devolução', `
+      ${paragrafo(`Oi, ${esc(primeiroNome(pedido.cliente.nome))}! Recebemos o seu pedido para o pedido <b>${esc(pedido.codigo)}</b>:`)}
+      ${paragrafo(esc(resumoDevolucao(d)))}
+      ${paragrafo('Vamos responder em até 2 dias úteis com as instruções. Não mande a peça antes da nossa resposta.')}
+      ${botao(link, 'Ver o andamento')}`),
+    texto: `Recebemos seu pedido de troca ou devolução (${resumoDevolucao(d)}). Respondemos em até 2 dias úteis. ${link}`,
+  };
+}
+
+export function emailNovaDevolucao(cfg, pedido, d, base) {
+  return {
+    para: cfg.email,
+    assunto: `Pedido de troca/devolução · ${pedido.cliente.nome}`,
+    html: moldura(cfg, 'Nova troca ou devolução', `
+      ${paragrafo(`<b>${esc(pedido.cliente.nome)}</b> pediu: ${esc(resumoDevolucao(d))}.`)}
+      ${d.mensagem ? paragrafo(`"${esc(d.mensagem)}"`) : ''}
+      ${paragrafo(`Pedido ${esc(pedido.codigo)} · ${esc(pedido.cliente.email)} · ${esc(pedido.cliente.telefone)}`)}
+      ${botao(`${base}/admin`, 'Responder no painel')}`),
+    texto: `${pedido.cliente.nome} pediu ${resumoDevolucao(d)}. Pedido ${pedido.codigo}. Responda no painel: ${base}/admin`,
+  };
+}
+
+export function emailDevolucaoAtualizada(cfg, pedido, d, base) {
+  const link = `${base}/pedido/${pedido.codigo}#devolucao`;
+  const [titulo, texto] = STATUS_DEVOLUCAO[d.status] ?? STATUS_DEVOLUCAO.aberta;
+  return {
+    para: pedido.cliente.email,
+    nome: pedido.cliente.nome,
+    assunto: `Troca ou devolução: ${titulo.toLowerCase()} · ${cfg.nomeLoja}`,
+    html: moldura(cfg, `Troca ou devolução: ${titulo}`, `
+      ${paragrafo(`Oi, ${esc(primeiroNome(pedido.cliente.nome))}! ${esc(texto)}`)}
+      ${d.resposta ? d.resposta.split(/\n+/).filter(Boolean).map(par => paragrafo(esc(par))).join('') : ''}
+      ${botao(link, 'Ver o pedido')}`),
+    texto: `Troca ou devolução: ${titulo}. ${d.resposta} ${link}`,
+  };
+}
+
+export function emailMeusPedidos(cfg, email, pedidos, base) {
+  const linhas = pedidos.map(p => `<tr><td style="padding:8px 0;font-size:14px;border-bottom:1px solid #e6e6e4"><a href="${esc(`${base}/pedido/${p.codigo}`)}" style="color:#000">Pedido ${esc(p.codigo)}</a><br><span style="color:#8a8a86">${esc(new Date(`${p.criado_em.replace(' ', 'T')}Z`).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }))} · ${reais(p.total)}</span></td></tr>`).join('');
+  return {
+    para: email,
+    assunto: `Seus pedidos · ${cfg.nomeLoja}`,
+    html: moldura(cfg, 'Seus pedidos', `
+      ${paragrafo('Toque no pedido para ver o andamento ou pedir uma troca ou devolução.')}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 18px">${linhas}</table>
+      ${paragrafo('Se não foi você que pediu, pode ignorar este e-mail.')}`),
+    texto: `Seus pedidos: ${pedidos.map(p => `${base}/pedido/${p.codigo}`).join(' ')}`,
   };
 }

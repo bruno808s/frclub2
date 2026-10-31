@@ -29,6 +29,42 @@ const checkoutLigado = cfg => freteLigado(cfg) && pagamentoLigado();
 // WhatsApp e Instagram só mostram a foto da prévia do link com o endereço completo.
 const enderecoCompleto = caminho => `${(process.env.SITE_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '')}${caminho}`;
 
+// Trocas e devoluções: o que o cliente pode pedir e em que pé está.
+export const MOTIVOS_DEVOLUCAO = {
+  arrependimento: 'Desisti da compra',
+  tamanho: 'O tamanho não serviu',
+  defeito: 'Veio com defeito ou avaria',
+  errado: 'Recebi uma peça diferente',
+  outro: 'Outro motivo',
+};
+export const QUER_DEVOLUCAO = { troca: 'Trocar', reembolso: 'Receber o dinheiro de volta' };
+export const STATUS_DEVOLUCAO = {
+  aberta: ['Recebemos o seu pedido', 'Vamos responder em até 2 dias úteis, por e-mail.'],
+  aprovada: ['Aprovada', 'Siga as instruções abaixo para mandar a peça de volta.'],
+  concluida: ['Concluída', 'A troca ou devolução foi finalizada.'],
+  recusada: ['Não aprovada', 'Veja o motivo abaixo. Se tiver dúvida, fale com a gente.'],
+};
+const DIAS_PARA_PEDIR = 120; // conta da data da compra: cobre entrega + os 90 dias de defeito
+export const podePedirDevolucao = pedido => ['pago', 'enviado'].includes(pedido.status)
+  && Date.now() - new Date(`${String(pedido.criado_em).replace(' ', 'T')}Z`).getTime() < DIAS_PARA_PEDIR * 24 * 60 * 60 * 1000;
+
+// "5571993258590" -> "+55 (71) 99325-8590"
+const telefoneBonito = n => String(n).replace(/^55(\d{2})(\d{4,5})(\d{4})$/, '+55 ($1) $2-$3');
+
+// Texto do painel em HTML: "## " é título, "- " é item de lista, linha em branco separa parágrafos.
+function textoLongo(texto, cfg) {
+  const blocos = [];
+  let lista = [];
+  const fecharLista = () => { if (lista.length) blocos.push(`<ul>${lista.join('')}</ul>`); lista = []; };
+  for (const linha of String(texto || '').replaceAll('{loja}', cfg.nomeLoja).split(/\r?\n/).map(l => l.trim()).filter(Boolean)) {
+    if (linha.startsWith('- ')) { lista.push(`<li>${esc(linha.slice(2))}</li>`); continue; }
+    fecharLista();
+    blocos.push(linha.startsWith('## ') ? `<h2>${esc(linha.slice(3))}</h2>` : `<p>${esc(linha)}</p>`);
+  }
+  fecharLista();
+  return blocos.join('');
+}
+
 const unicos = lista => [...new Set(lista.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
 // ---------- moldura comum (barra do topo, cabeçalho, sacola, rodapé, WhatsApp) ----------
@@ -117,11 +153,20 @@ function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, i
       <div>
         <h2>Atendimento</h2>
         <ul>
-          ${cfg.whatsapp ? `<li><a href="${esc(linkWhats(cfg))}" target="_blank" rel="noopener">WhatsApp</a></li>` : ''}
-          ${cfg.email ? `<li><a href="mailto:${esc(cfg.email)}">${esc(cfg.email)}</a></li>` : ''}
-          ${cfg.cidade ? `<li>${esc(cfg.cidade)}</li>` : ''}
+          <li><a href="/devolucoes#meus-pedidos">Meus pedidos</a></li>
+          <li><a href="/devolucoes">Trocas e devoluções</a></li>
+          <li><a href="/termos">Termos de uso e privacidade</a></li>
         </ul>
       </div>
+      ${cfg.whatsapp || cfg.email || cfg.cidade ? `
+      <div>
+        <h2>Contato</h2>
+        <ul>
+          ${cfg.whatsapp ? `<li><a href="${esc(linkWhats(cfg))}" target="_blank" rel="noopener">${esc(telefoneBonito(cfg.whatsapp))}</a></li>` : ''}
+          ${cfg.email ? `<li><a href="mailto:${esc(cfg.email)}">${esc(cfg.email)}</a></li>` : ''}
+          ${cfg.cidade ? `<li class="rodape-cidade">${esc(cfg.cidade)}</li>` : ''}
+        </ul>
+      </div>` : ''}
     </div>
     <p class="rodape-legal">© ${new Date().getFullYear()} ${esc(cfg.nomeLoja)}${cfg.cnpj ? ` · CNPJ ${esc(cfg.cnpj)}` : ''} · <a href="/admin" rel="nofollow">Área do lojista</a></p>
   </footer>
@@ -396,7 +441,7 @@ const NOME_STATUS = {
   enviado: ['Pedido enviado', 'Seu pedido já está a caminho.'],
   cancelado: ['Pedido cancelado', 'Se tiver alguma dúvida, fale com a gente.'],
 };
-export function paginaPedido(cfg, produtos, pedido) {
+export function paginaPedido(cfg, produtos, pedido, devolucao = null) {
   const [titulo, texto] = NOME_STATUS[pedido.status] ?? NOME_STATUS.aguardando;
   const recusado = pedido.status === 'aguardando' && ['rejected', 'cancelled'].includes(pedido.mp_status);
   const corpo = `
@@ -418,9 +463,80 @@ export function paginaPedido(cfg, produtos, pedido) {
       <p class="resumo-linha total"><span>Total</span><span>${reais(pedido.total)}</span></p>
     </div>
     <p class="nota">Entrega para ${esc(pedido.cliente.nome)} · ${esc(`${pedido.cliente.rua}, ${pedido.cliente.numero} · ${pedido.cliente.cidade}/${pedido.cliente.uf}`)}</p>
+    ${blocoDevolucao(pedido, devolucao)}
     ${cfg.whatsapp ? `<a class="botao botao-linha" href="${esc(linkWhats(cfg, `Olá! Sobre o meu pedido ${pedido.codigo}.`))}" target="_blank" rel="noopener">Falar no WhatsApp</a>` : ''}
   </section>`;
   return moldura(cfg, produtos, { titulo, corpo });
+}
+
+function blocoDevolucao(pedido, d) {
+  // Pedido em andamento (ou fora do prazo de pedir outro): mostra a situação; senão, o formulário.
+  if (d && (['aberta', 'aprovada'].includes(d.status) || !podePedirDevolucao(pedido))) {
+    const [titulo, texto] = STATUS_DEVOLUCAO[d.status] ?? STATUS_DEVOLUCAO.aberta;
+    return `
+    <div class="devolucao-caixa" id="devolucao">
+      <p class="peca-marca">Troca ou devolução</p>
+      <h2>${esc(titulo)}</h2>
+      <p>${esc(texto)}</p>
+      <p class="nota">${esc(QUER_DEVOLUCAO[d.quer] ?? d.quer)} · ${esc(MOTIVOS_DEVOLUCAO[d.motivo] ?? d.motivo)} · ${esc(d.itens.join(', '))}</p>
+      ${d.resposta ? `<div class="devolucao-resposta">${d.resposta.split(/\n+/).filter(Boolean).map(par => `<p>${esc(par)}</p>`).join('')}</div>` : ''}
+    </div>`;
+  }
+  if (!podePedirDevolucao(pedido)) return '';
+  const nomeItem = i => `${i.nome}${i.marca ? ` da ${i.marca}` : ''}${i.tamanho ? ` · tam. ${i.tamanho}` : ''}`;
+  const anterior = d ? `<p class="nota">O pedido anterior ficou como "${esc(STATUS_DEVOLUCAO[d.status][0])}". Se precisar, faça um novo.</p>` : '';
+  return `
+    <details class="devolucao-caixa" id="devolucao">
+      <summary>Pedir troca ou devolução</summary>
+      ${anterior}
+      <p class="nota">Antes, veja as regras em <a class="sublinhado" href="/devolucoes" target="_blank" rel="noopener">Trocas e devoluções</a>.</p>
+      <form class="devolucao-form" data-devolucao="${esc(pedido.codigo)}" novalidate>
+        <fieldset>
+          <legend>Quais peças?</legend>
+          ${pedido.itens.map((i, n) => `<label class="opcao"><input type="checkbox" name="itens" value="${n}" ${pedido.itens.length === 1 ? 'checked' : ''}><span>${esc(nomeItem(i))}</span></label>`).join('')}
+        </fieldset>
+        <label class="campo"><span>O que você quer?</span><select name="quer">${Object.entries(QUER_DEVOLUCAO).map(([id, nome]) => `<option value="${id}">${esc(nome)}</option>`).join('')}</select></label>
+        <label class="campo"><span>Motivo</span><select name="motivo">${Object.entries(MOTIVOS_DEVOLUCAO).map(([id, nome]) => `<option value="${id}">${esc(nome)}</option>`).join('')}</select></label>
+        <label class="campo largo"><span>Conte o que aconteceu (opcional)</span><textarea name="mensagem" rows="4" maxlength="1000" placeholder="Ex.: queria trocar pelo tamanho G"></textarea></label>
+        <p class="form-erro" role="alert" hidden></p>
+        <button class="botao" type="submit">Enviar pedido de troca ou devolução</button>
+        <p class="nota">Se a peça veio com defeito, mande fotos pelo WhatsApp depois de enviar.</p>
+      </form>
+    </details>`;
+}
+
+// ---------- trocas e devoluções, termos ----------
+export function paginaDevolucoes(cfg, produtos, emailLigado) {
+  const corpo = `
+  <section class="secao catalogo politica">
+    <div class="catalogo-cabeca"><h1>Trocas e devoluções</h1></div>
+    <div class="politica-caixa" id="meus-pedidos">
+      <h2>Meus pedidos</h2>
+      ${emailLigado ? `
+      <p>Para pedir uma troca ou devolução, abra a página do seu pedido. Não achou o link? Digite o e-mail usado na compra e mandamos os links de todos os seus pedidos.</p>
+      <form class="meus-pedidos-form" data-meus-pedidos novalidate>
+        <label class="campo"><span>E-mail da compra</span><input name="email" type="email" autocomplete="email" maxlength="120" required><small class="campo-erro" hidden></small></label>
+        <button class="botao" type="submit">Receber os links</button>
+        <p class="form-erro" role="alert" hidden></p>
+        <p class="form-ok" role="status" hidden></p>
+      </form>` : `<p>Para pedir uma troca ou devolução, abra a página do seu pedido pelo link do e-mail de confirmação${cfg.whatsapp ? ', ou fale com a gente no WhatsApp' : ''}.</p>`}
+      ${cfg.whatsapp ? `<a class="botao botao-linha" href="${esc(linkWhats(cfg, 'Olá! Preciso de ajuda com uma troca ou devolução.'))}" target="_blank" rel="noopener">Falar no WhatsApp</a>` : ''}
+    </div>
+    <div class="politica-texto">${textoLongo(cfg.textoDevolucoes, cfg)}</div>
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Trocas e devoluções', descricao: `Como trocar ou devolver uma compra da ${cfg.nomeLoja}.`, corpo });
+}
+
+export function paginaTermos(cfg, produtos) {
+  const corpo = `
+  <section class="secao catalogo politica">
+    <div class="catalogo-cabeca"><h1>Termos de uso e privacidade</h1></div>
+    <div class="politica-texto">
+      ${textoLongo(cfg.textoTermos, cfg)}
+      ${cfg.email || cfg.whatsapp || cfg.cnpj ? `<h2>Contato</h2><p>${esc([cfg.nomeLoja, cfg.cnpj && `CNPJ ${cfg.cnpj}`, cfg.email, cfg.whatsapp && telefoneBonito(cfg.whatsapp), cfg.cidade].filter(Boolean).join(' · '))}</p>` : ''}
+    </div>
+  </section>`;
+  return moldura(cfg, produtos, { titulo: 'Termos de uso e privacidade', corpo });
 }
 
 export function paginaDepoimentos(cfg, produtos, depoimentos) {

@@ -309,6 +309,49 @@
     });
   }
 
+  // ---------- trocas e devoluções ----------
+  const formDevolucao = $('[data-devolucao]');
+  formDevolucao?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const erro = $('.form-erro', formDevolucao);
+    const itens = $$('input[name="itens"]:checked', formDevolucao).map(i => Number(i.value));
+    erro.hidden = true;
+    if (!itens.length) { erro.textContent = 'Escolha pelo menos uma peça.'; erro.hidden = false; return; }
+    const botao = $('button[type="submit"]', formDevolucao);
+    botao.disabled = true;
+    try {
+      await postar(`/api/pedidos/${formDevolucao.dataset.devolucao}/devolucao`, { itens, quer: formDevolucao.quer.value, motivo: formDevolucao.motivo.value, mensagem: formDevolucao.mensagem.value });
+      location.replace(`${location.pathname}#devolucao`);
+      location.reload();
+    } catch (falha) {
+      erro.textContent = falha.message;
+      erro.hidden = false;
+      botao.disabled = false;
+    }
+  });
+  const formMeusPedidos = $('[data-meus-pedidos]');
+  formMeusPedidos?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const erro = $('.form-erro', formMeusPedidos);
+    const ok = $('.form-ok', formMeusPedidos);
+    erro.hidden = true;
+    ok.hidden = true;
+    if (!conferirForm(formMeusPedidos)) return;
+    const botao = $('button[type="submit"]', formMeusPedidos);
+    botao.disabled = true;
+    try {
+      await postar('/api/meus-pedidos', { email: formMeusPedidos.email.value.trim() });
+      ok.textContent = 'Pronto! Se houver compras com esse e-mail, os links chegam em instantes. Confira também o spam.';
+      ok.hidden = false;
+    } catch (falha) {
+      erro.textContent = falha.message;
+      erro.hidden = false;
+    } finally {
+      botao.disabled = false;
+    }
+  });
+  if (location.hash === '#devolucao') $('details#devolucao')?.setAttribute('open', '');
+
   // ---------- página do pedido ----------
   const pedido = $('.pedido');
   if (pedido?.hasAttribute('data-pago') && sacola.length) {
