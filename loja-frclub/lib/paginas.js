@@ -32,7 +32,8 @@ const enderecoCompleto = caminho => `${(process.env.SITE_URL || process.env.REND
 const unicos = lista => [...new Set(lista.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
 // ---------- moldura comum (barra do topo, cabeçalho, sacola, rodapé, WhatsApp) ----------
-function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, imagemOg }) {
+// Sem foto própria (página de peça), a prévia do link mostra o logo da loja.
+function moldura(cfg, produtos, { titulo, descricao, corpo, sobreFoto = false, imagemOg = '/static/img/compartilhar.jpg' }) {
   const logo = cfg.logo ? foto(cfg.logo) : '/static/img/logo-branca.png';
   const categorias = unicos(produtos.map(p => p.categoria));
   const marcas = unicos(produtos.map(p => p.marca));
@@ -232,7 +233,7 @@ export function paginaInicio(cfg, produtos, depoimentos = []) {
     <h2 id="duvidas-titulo">Perguntas frequentes</h2>
     <div class="faq">${cfg.faq.map(f => `<details><summary>${esc(f.p)}</summary><p>${esc(f.r)}</p></details>`).join('')}</div>
   </section>` : ''}`;
-  return moldura(cfg, produtos, { corpo, sobreFoto: true, imagemOg: heroPc });
+  return moldura(cfg, produtos, { corpo, sobreFoto: true });
 }
 
 // ---------- catálogo ----------
@@ -334,7 +335,7 @@ export function paginaPeca(cfg, produtos, p) {
     <div class="secao-cabeca"><h2 id="relacionados">Você também pode gostar</h2></div>
     <div class="grade">${relacionados.map(cartao).join('')}</div>
   </section>` : ''}`;
-  return moldura(cfg, produtos, { titulo: `${p.marca ? `${p.marca} ` : ''}${p.nome}`, descricao: p.descricao?.slice(0, 160), corpo, imagemOg: p.fotos[0] ? foto(p.fotos[0]) : '' });
+  return moldura(cfg, produtos, { titulo: `${p.marca ? `${p.marca} ` : ''}${p.nome}`, descricao: p.descricao?.slice(0, 160), corpo, imagemOg: p.fotos[0] ? foto(p.fotos[0]) : undefined });
 }
 
 // ---------- checkout (a sacola vem do aparelho; o servidor confere preço e frete) ----------
