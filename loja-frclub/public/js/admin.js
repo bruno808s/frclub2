@@ -565,7 +565,7 @@ async function abaConfig(corpo, aba) {
       <section class="bloco grade-campos">
         <h2 class="largo">Contato</h2>
         <label class="campo"><span>Nome da loja</span><input name="nomeLoja" maxlength="40" value="${esc(cfg.nomeLoja)}"></label>
-        <label class="campo"><span>WhatsApp (55 + DDD + número)</span><input name="whatsapp" inputmode="numeric" value="${esc(cfg.whatsapp)}" placeholder="5571999998888"></label>
+        <label class="campo"><span>WhatsApp com DDD</span><input name="whatsapp" inputmode="tel" value="${esc(cfg.whatsapp)}" placeholder="(71) 99999-8888"></label>
         <label class="campo largo"><span>Mensagem que já vem escrita no WhatsApp</span><input name="mensagemWhatsapp" maxlength="300" value="${esc(cfg.mensagemWhatsapp)}"></label>
         <label class="campo"><span>Instagram (sem @)</span><input name="instagram" value="${esc(cfg.instagram)}" placeholder="frclub"></label>
         <label class="campo"><span>E-mail</span><input name="email" type="email" value="${esc(cfg.email)}"></label>
@@ -648,8 +648,11 @@ async function abaConfig(corpo, aba) {
       avisar('Salvo. Já está no site.');
       abaConfig(corpo, aba);
     } catch (falha) {
-      erro.textContent = falha.message;
+      // Nada é salvo quando um campo está errado: o aviso precisa aparecer na tela.
+      erro.textContent = `Não salvou: ${falha.message}`;
       erro.hidden = false;
+      erro.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      avisar(`Não salvou: ${falha.message}`, 'erro');
       botao.disabled = false;
     }
   });

@@ -598,8 +598,9 @@ async function salvarAparencia(req, res) {
     mudancas.linkTopoUrl = u;
   }
   if ('whatsapp' in corpo) {
-    const n = texto(corpo.whatsapp, 30, 'WhatsApp').replace(/\D/g, '');
-    if (n && (n.length < 12 || n.length > 13)) throw new ErroHttp(400, 'WhatsApp: use 55 + DDD + número. Ex.: 5571999998888');
+    let n = texto(corpo.whatsapp, 30, 'WhatsApp').replace(/\D/g, '').replace(/^0+/, '');
+    if (n.length === 10 || n.length === 11) n = `55${n}`; // digitado só com DDD: o 55 do Brasil entra sozinho
+    if (n && (n.length < 12 || n.length > 13)) throw new ErroHttp(400, 'WhatsApp: digite o DDD e o número. Ex.: (71) 99999-8888');
     mudancas.whatsapp = n;
   }
   for (const rede of ['instagram']) {
