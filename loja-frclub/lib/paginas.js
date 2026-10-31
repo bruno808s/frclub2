@@ -285,7 +285,7 @@ export function paginaCatalogo(cfg, produtos, { categoria = '', marca = '', orde
 // ---------- peça ----------
 export function paginaPeca(cfg, produtos, p) {
   const relacionados = produtos.filter(o => o.id !== p.id && (o.categoria === p.categoria || o.marca === p.marca)).slice(0, 4);
-  const mensagem = `Olá! Tenho interesse na peça ${p.marca ? `${p.marca} ` : ''}${p.nome}.`;
+  const mensagem = `Olá! Tenho interesse na peça ${p.nome}${p.marca ? ` da ${p.marca}` : ''}.`;
   const corpo = `
   <section class="secao peca-pagina">
     <a class="voltar" href="/pecas">${ICONE.voltar}Todas as peças</a>

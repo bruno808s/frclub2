@@ -104,7 +104,7 @@
     }));
   }
   function linkPedido() {
-    const linhas = sacola.map(p => `• ${p.marca ? `${p.marca} ` : ''}${p.nome}${p.tamanho ? ` (tam. ${p.tamanho})` : ''}${p.preco ? ` - ${reais(p.preco)}` : ''}`);
+    const linhas = sacola.map(p => `• ${p.nome}${p.marca ? ` da ${p.marca}` : ''}${p.tamanho ? ` (tam. ${p.tamanho})` : ''}${p.preco ? ` - ${reais(p.preco)}` : ''}`);
     const total = sacola.reduce((t, p) => t + (p.preco || 0), 0);
     const texto = `Olá! Quero fazer um pedido na ${dados.loja}:\n${linhas.join('\n')}\nTotal: ${reais(total)}`;
     return dados.whatsapp ? `https://wa.me/${dados.whatsapp}?text=${encodeURIComponent(texto)}` : '/#contato';

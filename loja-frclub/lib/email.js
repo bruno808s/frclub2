@@ -105,3 +105,14 @@ export function emailPedidoEnviado(cfg, pedido, base) {
     texto: `Seu pedido ${pedido.codigo} foi enviado.${pedido.rastreio ? ` Rastreio: ${pedido.rastreio}.` : ''} ${link}`,
   };
 }
+
+export function emailTeste(cfg, base) {
+  return {
+    para: cfg.email,
+    assunto: `E-mail de teste · ${cfg.nomeLoja}`,
+    html: moldura(cfg, 'Teste de e-mail', `
+      ${paragrafo('Se você está lendo isto, os e-mails da loja estão funcionando: o cliente vai receber a confirmação do pagamento e o rastreio, e você recebe o aviso de cada venda.')}
+      ${botao(`${base}/admin`, 'Abrir o painel')}`),
+    texto: `Os e-mails da loja estão funcionando. Painel: ${base}/admin`,
+  };
+}

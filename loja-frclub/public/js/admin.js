@@ -536,6 +536,7 @@ async function abaConfig(corpo, aba) {
         <p class="nota">Enquanto algum item acima estiver desligado, a sacola continua finalizando pelo WhatsApp.</p>
         ${ligado(cfg.integracoes.email, 'E-mails ligados (Brevo): o cliente recebe a confirmação do pedido e o rastreio.', 'E-mails desligados: faltam as variáveis BREVO_API_KEY e EMAIL_REMETENTE no Render.')}
         <p class="nota">Os avisos de venda nova vão para o e-mail da aba "Contato e textos".</p>
+        ${cfg.integracoes.email ? '<div class="linha-botoes"><button class="botao botao-linha" type="button" data-email-teste>Enviar e-mail de teste</button></div>' : ''}
       </section>
       <section class="bloco grade-campos">
         <h2 class="largo">De onde as peças saem</h2>
@@ -604,6 +605,20 @@ async function abaConfig(corpo, aba) {
 
   const form = corpo.querySelector('form');
   const erro = form.querySelector('.erro');
+  form.querySelector('[data-email-teste]')?.addEventListener('click', async e => {
+    const botao = e.currentTarget;
+    botao.disabled = true;
+    botao.textContent = 'Enviando…';
+    try {
+      const { para } = await api('POST', '/admin/email-teste', {});
+      avisar(`E-mail enviado para ${para}. Confira a caixa de entrada e o spam.`);
+    } catch (falha) {
+      avisar(falha.message, 'erro');
+    } finally {
+      botao.disabled = false;
+      botao.textContent = 'Enviar e-mail de teste';
+    }
+  });
   // Troca de imagens (com pré-visualização).
   form.querySelectorAll('[data-imagem]').forEach(q => {
     const chave = q.dataset.imagem;

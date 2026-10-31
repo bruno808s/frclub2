@@ -15,7 +15,7 @@ import {
   paginaPeca, paginaPedido,
 } from './lib/paginas.js';
 import { ErroServico, buscarPagamento, cotarFrete, criarCobranca, freteLigado, pagamentoLigado } from './lib/pagamento.js';
-import { emailLigado, emailNovaVenda, emailPedidoEnviado, emailPedidoPago, enviarDepois } from './lib/email.js';
+import { emailLigado, emailNovaVenda, emailPedidoEnviado, emailPedidoPago, emailTeste, enviarDepois, enviarEmail } from './lib/email.js';
 
 const RAIZ = path.dirname(fileURLToPath(import.meta.url));
 const PUBLICO = path.join(RAIZ, 'public');
@@ -578,6 +578,24 @@ function excluirDepoimento(req, res, [id]) {
   responder(res, 200, { ok: true });
 }
 
+// Manda um e-mail de teste para o e-mail da loja e devolve o motivo exato se o Brevo recusar.
+async function testarEmail(req, res) {
+  const cfg = lerConfig(db);
+  if (!emailLigado()) throw new ErroHttp(503, 'Os e-mails estão desligados: faltam BREVO_API_KEY e EMAIL_REMETENTE no Render.');
+  if (!cfg.email) throw new ErroHttp(400, 'Preencha o E-mail na aba "Contato e textos": o teste vai para ele.');
+  if (!dentroDoLimite(`email-teste:${ipDe(req)}`, 5, 10 * 60 * 1000)) throw new ErroHttp(429, 'Muitos testes seguidos. Espere 10 minutos.');
+  try {
+    await enviarEmail(cfg, emailTeste(cfg, urlDoSite(req)));
+  } catch (erro) {
+    console.error('E-mail de teste:', erro.message);
+    const motivo = /\b401\b|unauthorized|key/i.test(erro.message) ? 'a chave BREVO_API_KEY no Render está errada ou foi apagada no Brevo.'
+      : /sender/i.test(erro.message) ? 'o EMAIL_REMETENTE não está confirmado em "Remetentes" no Brevo.'
+        : erro.message.replace(/^Brevo respondeu /, '');
+    throw new ErroHttp(502, `O e-mail não saiu: ${motivo}`);
+  }
+  responder(res, 200, { para: cfg.email });
+}
+
 // ---------- configuração do site ----------
 const CAMPOS_TEXTO = {
   nomeLoja: 40, barraTopo: 120, linkTopoTexto: 40, fraseHero: 80, mensagemWhatsapp: 300, tituloPecas: 60,
@@ -736,6 +754,7 @@ const ROTAS = [
   ['DELETE', /^\/api\/admin\/depoimentos\/(\d+)$/, exigirLogin(excluirDepoimento)],
   ['GET', /^\/api\/admin\/aparencia$/, exigirLogin((req, res) => responder(res, 200, configPainel()))],
   ['PATCH', /^\/api\/admin\/aparencia$/, exigirLogin(salvarAparencia)],
+  ['POST', /^\/api\/admin\/email-teste$/, exigirLogin(testarEmail)],
 ];
 
 const POLITICA = [
