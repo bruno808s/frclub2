@@ -7,7 +7,7 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { abrirBanco, lerConfig, paraPedido, paraProduto, salvarConfig } from './lib/banco.js';
 import {
@@ -671,7 +671,7 @@ function peca(req, res, [slug]) {
 // ---------- arquivos estáticos ----------
 const TIPOS = {
   '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png',
-  '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8',
+  '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8', '.ico': 'image/x-icon',
 };
 async function estatico(req, res, [arquivo]) {
   const caminho = path.normalize(path.join(PUBLICO, arquivo));
@@ -681,6 +681,17 @@ async function estatico(req, res, [arquivo]) {
   if (!info.isFile()) throw new ErroHttp(404, 'Não encontrado.');
   res.writeHead(200, { 'Content-Type': TIPOS[path.extname(caminho)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' });
   createReadStream(caminho).pipe(res);
+}
+
+// Ícone da aba com o logo enviado no painel (num quadrado preto, como o topo do site).
+async function iconeDoLogo(req, res) {
+  const { logo } = lerConfig(db);
+  if (!arquivoValido(logo)) throw new ErroHttp(404, 'Sem logo.');
+  let bytes;
+  try { bytes = await readFile(path.join(PASTA_FOTOS, logo)); } catch { throw new ErroHttp(404, 'Sem logo.'); }
+  const tipo = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[logo.split('.').pop()];
+  res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' });
+  res.end(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#000"/><image href="data:${tipo};base64,${bytes.toString('base64')}" x="14" y="14" width="72" height="72" preserveAspectRatio="xMidYMid meet"/></svg>`);
 }
 
 // ---------- rotas ----------
@@ -707,6 +718,8 @@ const ROTAS = [
   ['GET', /^\/admin\/?$/, (req, res) => { res.setHeader('Cache-Control', 'no-store'); html(res, 200, paginaAdmin()); }],
   ['GET', /^\/fotos\/([^/]+)$/, servirFoto],
   ['GET', /^\/static\/(.+)$/, estatico],
+  ['GET', /^\/favicon\.ico$/, (req, res) => estatico(req, res, ['img/favicon.ico'])],
+  ['GET', /^\/icone\.svg$/, iconeDoLogo],
   ['GET', /^\/robots\.txt$/, (req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /checkout\nDisallow: /pedido/\n'); }],
   ['GET', /^\/api\/sessao$/, (req, res) => responder(res, 200, { logado: logado(req), painelLigado: !motivoPainelDesligado(), motivo: motivoPainelDesligado() })],
   ['POST', /^\/api\/entrar$/, entrar],
