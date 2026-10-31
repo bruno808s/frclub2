@@ -109,7 +109,11 @@ function logado(req) {
   if (!token) return false;
   return Boolean(db.prepare('SELECT 1 FROM sessoes WHERE token_hash = ? AND expira_em > ?').get(hashSessao(token), Date.now()));
 }
-const ipDe = req => (ATRAS_DE_PROXY ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '') || req.socket.remoteAddress;
+// IP de quem visita, para os limites contra abuso. No Render o primeiro IP do X-Forwarded-For pode ser
+// inventado pelo visitante; o CF-Connecting-IP é escrito pela Cloudflare (que fica na frente do Render).
+const ipDe = req => (ATRAS_DE_PROXY
+  ? String(req.headers['cf-connecting-ip'] || '').trim() || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+  : '') || req.socket.remoteAddress;
 const tentativas = new Map();
 let falhasGerais = []; // limite que não depende do IP (quem troca de IP também esbarra nele)
 // Comparação em tempo constante: não dá para descobrir a senha medindo o tempo de resposta.
@@ -529,6 +533,7 @@ async function verPedido(req, res, [codigo], url) {
     }
   }
   res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow'); // tem nome e endereço do cliente
   html(res, 200, paginaPedido(lerConfig(db), listarVisiveis(), pedido, ultimaDevolucao(pedido.id)));
 }
 
