@@ -25,7 +25,7 @@ const PUBLICO = path.join(RAIZ, 'public');
 const DADOS = path.resolve(process.env.DATA_DIR || path.join(RAIZ, 'dados'));
 const PASTA_FOTOS = path.join(DADOS, 'fotos');
 const PORTA = Number(process.env.PORT) || 3000;
-const SENHA = process.env.ADMIN_SENHA || '';
+const SENHA = (process.env.ADMIN_SENHA || '').trim(); // espaço ou quebra de linha colados por engano no Render não contam
 const ATRAS_DE_PROXY = Boolean(process.env.CONFIAR_PROXY || process.env.RENDER);
 
 const COOKIE = 'loja_sessao';
@@ -118,7 +118,7 @@ const tentativas = new Map();
 let falhasGerais = []; // limite que não depende do IP (quem troca de IP também esbarra nele)
 // Comparação em tempo constante: não dá para descobrir a senha medindo o tempo de resposta.
 function senhaConfere(digitada) {
-  const a = crypto.createHash('sha256').update(String(digitada)).digest();
+  const a = crypto.createHash('sha256').update(String(digitada).trim()).digest();
   const b = crypto.createHash('sha256').update(SENHA).digest();
   return SENHA.length > 0 && crypto.timingSafeEqual(a, b);
 }
@@ -155,8 +155,9 @@ async function entrar(req, res) {
   falhasGerais = falhasGerais.filter(t => agora - t < QUINZE_MIN);
   if (recentes.length >= 8 || falhasGerais.length >= 40) throw new ErroHttp(429, 'Muitas tentativas. Espere 15 minutos.');
   const corpo = await lerJson(req);
-  const robo = typeof corpo.site === 'string' && corpo.site !== ''; // campo invisível: só robô preenche
-  if (robo || typeof corpo.senha !== 'string' || !senhaConfere(corpo.senha)) {
+  // Sem campo-isca aqui: gerenciadores de senha às vezes preenchem campos escondidos e o dono ficava de fora.
+  // Contra robôs valem os limites de tentativas acima.
+  if (typeof corpo.senha !== 'string' || !senhaConfere(corpo.senha)) {
     tentativas.set(ip, [...recentes, agora]);
     falhasGerais.push(agora);
     await new Promise(r => setTimeout(r, 600 + crypto.randomInt(400)));

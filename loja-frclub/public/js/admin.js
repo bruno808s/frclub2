@@ -77,7 +77,6 @@ function telaEntrar() {
       <img src="/static/img/logo-cor.png" alt="" width="72" height="72">
       <h1>Painel da loja</h1>
       <label class="campo"><span>Senha</span><input type="password" name="senha" autocomplete="current-password" required></label>
-      <label class="isca" aria-hidden="true">Site <input name="site" tabindex="-1" autocomplete="off"></label>
       <p class="erro" role="alert" hidden></p>
       <button class="botao" type="submit">Entrar</button>
       <a class="link" href="/">Voltar para o site</a>
@@ -90,7 +89,7 @@ function telaEntrar() {
     const erro = form.querySelector('.erro');
     erro.hidden = true;
     try {
-      await api('POST', '/entrar', { senha: form.senha.value, site: form.site.value });
+      await api('POST', '/entrar', { senha: form.senha.value });
       telaPainel('pecas');
     } catch (falha) {
       erro.textContent = falha.message;
